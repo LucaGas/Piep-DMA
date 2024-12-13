@@ -5,7 +5,9 @@ import pandas as pd
 from pathlib import Path
 
 def read_file(file_path, assay, debug=False):
-    """Read a .txt file, determine its format, and call the appropriate extraction function."""
+    """
+    Read a .txt file, determine its format, and call the appropriate extraction function.
+    """
     try:
         # Detect file encoding
         with open(file_path, 'rb') as f:
@@ -50,8 +52,37 @@ def read_file(file_path, assay, debug=False):
             print(f"An error occurred while processing the file '{file_path}': {e}")
         return None, None
 
+def extract_common_header(headers, debug=False):
+    """
+    Identify the common header as the one containing 'Temp' or 'Time'.
+    Priority: 'Temp' > 'Time' > first column.
+    """
+    temp_headers = [h for h in headers if 'temp' in h.lower()]
+    if temp_headers:
+        if debug:
+            print(f"Identified common header based on 'Temp': {temp_headers[0]}")
+        return temp_headers[0]
+    
+    time_headers = [h for h in headers if 'time' in h.lower()]
+    if time_headers:
+        if debug:
+            print(f"Identified common header based on 'Time': {time_headers[0]}")
+        return time_headers[0]
+    
+    # Default to first column if neither 'Temp' nor 'Time' is found
+    if headers:
+        if debug:
+            print(f"No 'Temp' or 'Time' found. Defaulting to first header: {headers[0]}")
+        return headers[0]
+    else:
+        if debug:
+            print("No headers found to identify common header.")
+        return None
+
 def extract_single(file_path, assay, debug=False):
-    """Extract data from single format files."""
+    """
+    Extract data from single format files.
+    """
     metadata = {}
     column_headers = None
     data_lines = []
@@ -94,6 +125,12 @@ def extract_single(file_path, assay, debug=False):
         file_property = metadata.get('FILE', Path(file_path).stem)
         metadata['FILE'] = file_property
 
+        # Determine the common header
+        if column_headers:
+            common_header = extract_common_header(column_headers, debug=debug)
+        else:
+            common_header = None
+
         # Create DataFrame
         if column_headers and data_lines:
             data = pd.DataFrame(data_lines, columns=column_headers)
@@ -124,7 +161,9 @@ def extract_single(file_path, assay, debug=False):
         return None, None
 
 def extract_multi(file_path, assay, debug=False):
-    """Extract data from multi format files representing multiple experiments."""
+    """
+    Extract data from multi-format files representing multiple experiments.
+    """
     metadata = {}
     experiments = {}
     common_header = None
@@ -162,13 +201,21 @@ def extract_multi(file_path, assay, debug=False):
                     headers = line[2:].split('\t')
                     if debug:
                         print(f"Column Headers: {headers}")
-                    # The first header is common (e.g., Time/min), the rest correspond to experiments
-                    if len(headers) < 2:
+                    # Determine the common header dynamically
+                    common_header = extract_common_header(headers, debug=debug)
+                    if not common_header:
                         if debug:
-                            print(f"Line {line_number}: Not enough columns for multi format.")
+                            print(f"Line {line_number}: Unable to identify common header. Skipping file.")
                         return metadata, None
-                    common_header = headers[0]
-                    experiment_headers = headers[1:]
+                    # Identify the index of the common header
+                    try:
+                        common_header_idx = headers.index(common_header)
+                    except ValueError:
+                        if debug:
+                            print(f"Line {line_number}: Common header '{common_header}' not found in headers. Skipping file.")
+                        return metadata, None
+                    # The rest are experiment headers (excluding the common header)
+                    experiment_headers = headers[:common_header_idx] + headers[common_header_idx+1:]
                     if debug:
                         print(f"Common Header: {common_header}")
                         print(f"Experiment Headers: {experiment_headers}")
@@ -203,23 +250,29 @@ def extract_multi(file_path, assay, debug=False):
                         if debug:
                             print(f"Line {line_number}: No data found. Skipping line.")
                         continue
-                    common_value = data_parts[0].strip()
+                    try:
+                        common_value = data_parts[common_header_idx].strip()
+                    except IndexError:
+                        if debug:
+                            print(f"Line {line_number}: Missing common header value. Skipping line.")
+                        continue
 
                     for idx, exp_name in enumerate(experiments.keys()):
                         # Calculate the index for this experiment's data
+                        # Since we excluded the common header, data_index = original index - 1
                         data_index = idx + 1
-                        if data_index < len(data_parts):
-                            exp_value = data_parts[data_index].strip()
-                            if exp_value:
-                                experiments[exp_name]['data'].append({
-                                    common_header: common_value,
-                                    experiments[exp_name]['header']: exp_value
-                                })
-                                if debug:
-                                    print(f"Line {line_number}: Added data to {exp_name}")
-                            else:
-                                if debug:
-                                    print(f"Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
+                        if data_index >= len(data_parts):
+                            if debug:
+                                print(f"Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
+                            continue
+                        exp_value = data_parts[data_index].strip()
+                        if exp_value:
+                            experiments[exp_name]['data'].append({
+                                common_header: common_value,
+                                experiments[exp_name]['header']: exp_value
+                            })
+                            if debug:
+                                print(f"Line {line_number}: Added data to {exp_name}")
                         else:
                             if debug:
                                 print(f"Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
@@ -241,7 +294,7 @@ def extract_multi(file_path, assay, debug=False):
                     existing_df = consolidated_experiments[exp_name]
                     # Check if columns are the same
                     if set(existing_df.columns) != set(df.columns):
-                        # Merge the DataFrames by adding new columns
+                        # Merge the DataFrames by adding new columns based on common_header
                         merged_df = pd.merge(existing_df, df, on=common_header, how='outer', suffixes=('', '_dup'))
                         # Drop duplicate columns
                         cols_to_drop = [col for col in merged_df.columns if col.endswith('_dup')]
@@ -250,7 +303,7 @@ def extract_multi(file_path, assay, debug=False):
                         if debug:
                             print(f"Merged DataFrames for experiment: {exp_name} due to differing columns.")
                     else:
-                        # If columns are same, append the rows
+                        # If columns are same, append rows
                         consolidated_experiments[exp_name] = pd.concat([existing_df, df], ignore_index=True)
                         if debug:
                             print(f"Appended rows to existing experiment: {exp_name}")

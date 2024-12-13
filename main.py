@@ -1,10 +1,16 @@
 # main.py
+
 import argparse
 from pathlib import Path
 from file_reader import read_file
 import pandas as pd
+import subprocess
+import sys
 
 def prepare(debug=False):
+    """
+    Prepare the data directory structure.
+    """
     if debug:
         print("Running prepare logic...")
     data_dir = Path("data")
@@ -18,6 +24,10 @@ def prepare(debug=False):
         print(f"Directory '{assay_dir}' is ready.")
 
 def process(debug=False):
+    """
+    Process the data files: extract metadata and data, integrate metadata into DataFrames,
+    save them as CSV files within ASSAY directories, and pass them to analyzer.py.
+    """
     if debug:
         print("Running process logic...")
     data_dir = Path("data")
@@ -48,6 +58,12 @@ def process(debug=False):
 
         if data is not None:
             if isinstance(data, dict):
+                # Create ASSAY-specific output directory
+                assay_output_dir = output_dir / assay
+                assay_output_dir.mkdir(parents=True, exist_ok=True)
+                if debug:
+                    print(f"Assay output directory '{assay_output_dir}' is ready.")
+
                 for exp_name, df in data.items():
                     if not df.empty:
                         # Integrate metadata into the DataFrame
@@ -55,12 +71,23 @@ def process(debug=False):
                             df[key] = value
                         if debug:
                             print(f"\nSaving DataFrame for experiment: {exp_name} with metadata.")
+
                         # Define the output file path
                         safe_exp_name = exp_name.replace(' ', '_').replace('/', '_')  # Replace spaces and slashes for file naming
-                        output_file = output_dir / f"{safe_exp_name}.csv"
+                        output_file = assay_output_dir / f"{safe_exp_name}.csv"
                         df.to_csv(output_file, index=False)
                         if debug:
                             print(f"Saved DataFrame to {output_file}")
+
+                        # Call analyzer.py with the path to the saved CSV
+                        try:
+                            if debug:
+                                print(f"Calling analyzer.py for {output_file}")
+                            subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
+                            if debug:
+                                print(f"Analyzer completed for {output_file}")
+                        except subprocess.CalledProcessError as e:
+                            print(f"Analyzer failed for {output_file} with error: {e}")
             else:
                 if debug:
                     print("Data is not in expected format.")
@@ -69,6 +96,9 @@ def process(debug=False):
                 print("No data extracted.")
 
 def main():
+    """
+    Parse command-line arguments and execute the corresponding functions.
+    """
     parser = argparse.ArgumentParser(description="Piep-DMA Project")
     parser.add_argument("--prepare", action="store_true", help="Prepare the data")
     parser.add_argument("--process", action="store_true", help="Process the data")
