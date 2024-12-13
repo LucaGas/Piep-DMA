@@ -41,7 +41,7 @@ def analyze(csv_path, debug=False):
 
 def main():
     """
-    Dummy analyzer that passes the CSV file to plotter.py.
+    Analyzer that passes the CSV file to plotter.py for plotting.
     """
     if len(sys.argv) < 2:
         print("Analyzer: No CSV file provided.")
@@ -51,11 +51,23 @@ def main():
     print(f"Analyzer: Received {csv_file} for analysis.")
 
     try:
+        # Call plotter.py as a standalone script with the CSV file
         print(f"Analyzer: Calling plotter.py for {csv_file}")
-        subprocess.run([sys.executable, "plotter.py", csv_file], check=True)
+        result = subprocess.run(
+            [sys.executable, "plotter.py", csv_file],
+            check=True,
+            capture_output=True,  # Capture stdout and stderr for logging
+            text=True  # Decode stdout and stderr as text
+        )
         print(f"Analyzer: Plotter completed for {csv_file}")
+        print(f"Plotter Output:\n{result.stdout}")
+        if result.stderr:
+            print(f"Plotter Warnings/Errors:\n{result.stderr}")
     except subprocess.CalledProcessError as e:
         print(f"Analyzer: Plotter failed for {csv_file} with error: {e}")
+        print(f"Plotter Error Output:\n{e.stderr}")
+    except Exception as ex:
+        print(f"Analyzer: Unexpected error while calling plotter.py: {ex}")
 
 if __name__ == "__main__":
     main()
