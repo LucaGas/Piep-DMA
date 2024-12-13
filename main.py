@@ -25,7 +25,7 @@ def prepare(debug=False):
 def process(debug=False):
     """
     Process the data files: extract metadata and data, integrate metadata into DataFrames,
-    save them as CSV files within ASSAY directories, and pass them to analyzer.py.
+    save them as CSV files within ASSAY directories, and (optionally) pass them to analyzer.py.
     """
     if debug:
         print("Running process logic...")
@@ -46,16 +46,22 @@ def process(debug=False):
 
         metadata, data = read_file(file_path, assay=assay, debug=debug)
 
-        if metadata:
-            if debug:
-                print("\nMetadata:")
-                for key, value in metadata.items():
-                    print(f"  {key}: {value}")
-        else:
-            if debug:
-                print("No metadata extracted.")
+        # metadata is global file-level metadata (if any)
+        if metadata and debug:
+            print("\nGlobal Metadata:")
+            for key, value in metadata.items():
+                print(f"  {key}: {value}")
 
         if data is not None:
+            # data should be a dictionary:
+            # data = {
+            #   'ExperimentName': {
+            #       'metadata': {...},  # Experiment-level metadata
+            #       'data': DataFrame  # Experiment data
+            #   },
+            #   ...
+            # }
+
             if isinstance(data, dict):
                 # Create ASSAY-specific output directory
                 assay_output_dir = output_dir / assay
@@ -63,33 +69,46 @@ def process(debug=False):
                 if debug:
                     print(f"Assay output directory '{assay_output_dir}' is ready.")
 
-                for exp_name, df in data.items():
-                    if not df.empty:
-                        # Integrate metadata into the DataFrame
-                        for key, value in metadata.items():
+                # Iterate over each experiment
+                for exp_name, exp_info in data.items():
+                    df = exp_info.get('data', None)
+                    exp_metadata = exp_info.get('metadata', {})
+
+                    if df is not None and not df.empty:
+                        # Integrate per-experiment metadata into the DataFrame
+                        for key, value in exp_metadata.items():
                             df[key] = value
+
+                        # Also, if you want to integrate global metadata into DataFrame:
+                        for k, v in metadata.items():
+                            df[k] = v
+
                         if debug:
                             print(f"\nSaving DataFrame for experiment: {exp_name} with metadata.")
 
                         # Define the output file path
-                        safe_exp_name = exp_name.replace(' ', '_').replace('/', '_').replace('\\', '_')  # Replace spaces and slashes for file naming
+                        safe_exp_name = exp_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
                         output_file = assay_output_dir / f"{safe_exp_name}.csv"
                         df.to_csv(output_file, index=False)
                         if debug:
                             print(f"Saved DataFrame to {output_file}")
 
-                        # Call analyzer.py with the path to the saved CSV
+                        # (Optional) Call analyzer.py with the path to the saved CSV
                         try:
                             if debug:
                                 print(f"Calling analyzer.py for {output_file}")
-                            #subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
+                            # Uncomment to run analyzer if needed
+                            # subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
                             if debug:
                                 print(f"Analyzer completed for {output_file}")
                         except subprocess.CalledProcessError as e:
                             print(f"Analyzer failed for {output_file} with error: {e}")
+                    else:
+                        if debug:
+                            print(f"No data for experiment '{exp_name}' or DataFrame is empty.")
             else:
                 if debug:
-                    print("Data is not in expected format.")
+                    print("Data is not in expected dictionary format.")
         else:
             if debug:
                 print("No data extracted.")
