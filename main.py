@@ -72,7 +72,7 @@ def process(debug=False):
                             print(f"\nSaving DataFrame for experiment: {exp_name} with metadata.")
 
                         # Define the output file path
-                        safe_exp_name = exp_name.replace(' ', '_').replace('/', '_')  # Replace spaces and slashes for file naming
+                        safe_exp_name = exp_name.replace(' ', '_').replace('/', '_').replace('\\', '_')  # Replace spaces and slashes for file naming
                         output_file = assay_output_dir / f"{safe_exp_name}.csv"
                         df.to_csv(output_file, index=False)
                         if debug:
@@ -82,7 +82,7 @@ def process(debug=False):
                         try:
                             if debug:
                                 print(f"Calling analyzer.py for {output_file}")
-                            subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
+                            #subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
                             if debug:
                                 print(f"Analyzer completed for {output_file}")
                         except subprocess.CalledProcessError as e:

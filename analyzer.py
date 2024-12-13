@@ -11,8 +11,8 @@ def analyze(csv_path, debug=False):
     In the future, this function will perform data analysis and pass results to plotter.py.
     """
     try:
-        # Load the CSV file
-        data = pd.read_csv(csv_path)
+        # Load the CSV file with detected encoding
+        data = pd.read_csv(csv_path, encoding='utf-8')
         if debug:
             print(f"Analyzer: Received data from '{csv_path}' with {len(data)} records.")
             print("Analyzer: Displaying first few rows of the data:")
@@ -25,12 +25,12 @@ def analyze(csv_path, debug=False):
         # Call plotter.py with the path to the saved CSV
         try:
             if debug:
-                print(f"Analyzer: Calling plotter.py for {csv_path}")
+                print(f"Analyzer: Calling plotter.py for '{csv_path}'")
             subprocess.run([sys.executable, "plotter.py", str(csv_path)], check=True)
             if debug:
-                print(f"Analyzer: Plotter completed for {csv_path}")
+                print(f"Analyzer: Plotter completed for '{csv_path}'")
         except subprocess.CalledProcessError as e:
-            print(f"Analyzer Error: Plotter failed for {csv_path} with error: {e}")
+            print(f"Analyzer Error: Plotter failed for '{csv_path}' with error: {e}")
 
     except FileNotFoundError:
         print(f"Analyzer Error: The file '{csv_path}' does not exist.")
