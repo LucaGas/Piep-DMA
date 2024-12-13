@@ -3,7 +3,6 @@
 import argparse
 from pathlib import Path
 from file_reader import read_file
-import pandas as pd
 import subprocess
 import sys
 

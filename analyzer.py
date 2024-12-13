@@ -48,7 +48,7 @@ def main():
         sys.exit(1)
 
     csv_path = sys.argv[1]
-    analyze(csv_path, debug=True)  # Set debug=True if you want detailed logs
+    analyze(csv_path, debug=True)  # Set debug=True for detailed logs
 
 if __name__ == "__main__":
-        main()
+    main()
