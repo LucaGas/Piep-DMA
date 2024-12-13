@@ -1,22 +1,18 @@
 # file_reader.py
-
+import numpy as np
 import pandas as pd
 from pathlib import Path
-import chardet  # Ensure chardet is installed: pip install chardet
 
 def read_file(file_path, assay, debug=False):
     """
     Read a .txt file, determine its format (single or multi), and extract metadata and data.
     """
     try:
-        # Detect encoding
-        encoding = detect_file_encoding(file_path, debug=debug)
-        
-        with open(file_path, 'r', encoding=encoding, errors='replace') as f:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             lines = f.readlines()
         
         if debug:
-            print(f"Reading file '{file_path}' with encoding '{encoding}'.")
+            print(f"Reading file '{file_path}' with UTF-8 encoding.")
         
         # Determine if the file is multi-format by checking the number of metadata entries
         metadata_lines = [line for line in lines if line.startswith('#') and not line.startswith('##')]
@@ -34,19 +30,6 @@ def read_file(file_path, assay, debug=False):
             print(f"An error occurred while processing the file '{file_path}': {e}")
         return None, None
 
-def detect_file_encoding(file_path, debug=False):
-    """
-    Detect the encoding of the given file using chardet.
-    """
-    with open(file_path, 'rb') as f:
-        raw_data = f.read()
-    result = chardet.detect(raw_data)
-    encoding = result['encoding']
-    confidence = result['confidence']
-    if debug:
-        print(f"File Reader: Detected encoding '{encoding}' with confidence {confidence} for file '{file_path}'")
-    return encoding if encoding else 'utf-8'  # Default to 'utf-8' if detection fails
-
 def extract_common_header(headers, debug=False):
     """
     Identify the common header as the one containing 'Temp' or 'Time'.
@@ -55,23 +38,23 @@ def extract_common_header(headers, debug=False):
     temp_headers = [h for h in headers if 'temp' in h.lower()]
     if temp_headers:
         if debug:
-            print(f"File Reader: Identified common header based on 'Temp': {temp_headers[0]}")
+            print(f"Identified common header based on 'Temp': {temp_headers[0]}")
         return temp_headers[0]
     
     time_headers = [h for h in headers if 'time' in h.lower()]
     if time_headers:
         if debug:
-            print(f"File Reader: Identified common header based on 'Time': {time_headers[0]}")
+            print(f"Identified common header based on 'Time': {time_headers[0]}")
         return time_headers[0]
     
     # Default to first column if neither 'Temp' nor 'Time' is found
     if headers:
         if debug:
-            print(f"File Reader: No 'Temp' or 'Time' found. Defaulting to first header: {headers[0]}")
+            print(f"No 'Temp' or 'Time' found. Defaulting to first header: {headers[0]}")
         return headers[0]
     else:
         if debug:
-            print("File Reader: No headers found to identify common header.")
+            print("No headers found to identify common header.")
         return None
 
 def extract_single(lines, file_path, assay, debug=False):
@@ -92,14 +75,14 @@ def extract_single(lines, file_path, assay, debug=False):
                 key, value = parts
                 metadata[key.strip()] = value.strip()
                 if debug:
-                    print(f"File Reader: Metadata - {key.strip()}: {value.strip()}")
+                    print(f"Metadata - {key.strip()}: {value.strip()}")
             continue
         
         # Column headers start with ##
         if line.startswith('##'):
             column_headers = line[2:].split('\t')  # Remove ## and split into columns
             if debug:
-                print(f"File Reader: Column Headers: {column_headers}")
+                print(f"Column Headers: {column_headers}")
             continue
         
         # Data lines
@@ -125,16 +108,16 @@ def extract_single(lines, file_path, assay, debug=False):
         data_df = pd.DataFrame(data_lines, columns=column_headers)
         experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', 'Unknown_File')}"
         if debug:
-            print(f"File Reader: Experiment Name: {experiment_name}")
-            print("File Reader: Metadata extracted:")
+            print(f"Experiment Name: {experiment_name}")
+            print("Metadata extracted:")
             for key, value in metadata.items():
                 print(f"  {key}: {value}")
-            print("\nFile Reader: Data Preview:")
+            print("\nData Preview:")
             print(data_df.head())
         return metadata, {experiment_name: data_df}
     else:
         if debug:
-            print("File Reader: No valid data or column headers found.")
+            print("No valid data or column headers found.")
         return metadata, None
 
 def extract_multi(lines, file_path, assay, debug=False):
@@ -157,38 +140,40 @@ def extract_multi(lines, file_path, assay, debug=False):
                 if not part:
                     continue
                 if '\t' in part:
-                    key, value = part.split('\t', 1)
-                    metadata[key.strip()] = value.strip()
+                    key, value = part.split('\t', 1)  # Split by the first tab character
+                    metadata[key.strip()] = value.strip()  # Save the key-value pair
                     if debug:
-                        print(f"File Reader: Metadata - {key.strip()}: {value.strip()}")
+                        print(f"Metadata - {key.strip()}: {value.strip()}")
                 else:
+                    # Add the key with "NaN" as the value if it's missing a tab
+                    metadata[part] = np.nan
                     if debug:
-                        print(f"File Reader: Line {line_number}: Ignored malformed metadata part '{part}'.")
+                        print(f"Metadata - {part}: NaN (added as missing value)")
             continue
         
         # Column headers line
         if line.startswith('##') and not experiment_headers:
             headers = line[2:].split('\t')
             if debug:
-                print(f"File Reader: Column Headers: {headers}")
+                print(f"Column Headers: {headers}")
             # Determine the common header dynamically
             common_header = extract_common_header(headers, debug=debug)
             if not common_header:
                 if debug:
-                    print(f"File Reader: Line {line_number}: Unable to identify common header. Skipping file.")
+                    print(f"Line {line_number}: Unable to identify common header. Skipping file.")
                 return metadata, None
             # Identify the index of the common header
             try:
                 common_header_idx = headers.index(common_header)
             except ValueError:
                 if debug:
-                    print(f"File Reader: Line {line_number}: Common header '{common_header}' not found in headers. Skipping file.")
+                    print(f"Line {line_number}: Common header '{common_header}' not found in headers. Skipping file.")
                 return metadata, None
             # The rest are experiment headers (excluding the common header)
             experiment_headers = headers[:common_header_idx] + headers[common_header_idx+1:]
             if debug:
-                print(f"File Reader: Common Header: {common_header}")
-                print(f"File Reader: Experiment Headers: {experiment_headers}")
+                print(f"Common Header: {common_header}")
+                print(f"Experiment Headers: {experiment_headers}")
             # Initialize experiments dictionary
             for idx, exp_header in enumerate(experiment_headers):
                 # Naming each experiment by combining ASSAY and FILE
@@ -203,14 +188,14 @@ def extract_multi(lines, file_path, assay, debug=False):
                         'data': []
                     }
                     if debug:
-                        print(f"File Reader: Duplicate Experiment Name detected: {experiment_name}. Adding new experiment '{unique_exp_name}' with header '{exp_header}'.")
+                        print(f"Duplicate Experiment Name detected: {experiment_name}. Adding new experiment '{unique_exp_name}' with header '{exp_header}'.")
                 else:
                     experiments[experiment_name] = {
                         'header': exp_header,
                         'data': []
                     }
                     if debug:
-                        print(f"File Reader: Initialized {experiment_name} with header '{exp_header}'")
+                        print(f"Initialized {experiment_name} with header '{exp_header}'")
             continue
         
         # Data lines
@@ -218,21 +203,21 @@ def extract_multi(lines, file_path, assay, debug=False):
             data_parts = line.split('\t')
             if len(data_parts) < 1:
                 if debug:
-                    print(f"File Reader: Line {line_number}: No data found. Skipping line.")
+                    print(f"Line {line_number}: No data found. Skipping line.")
                 continue
             try:
                 common_value = data_parts[common_header_idx].strip()
             except IndexError:
                 if debug:
-                    print(f"File Reader: Line {line_number}: Missing common header value. Skipping line.")
+                    print(f"Line {line_number}: Missing common header value. Skipping line.")
                 continue
             
             for idx, exp_name in enumerate(experiments.keys()):
                 # Calculate the index for this experiment's data
                 data_index = idx + 1
                 if data_index >= len(data_parts):
-                    if debug:
-                        print(f"File Reader: Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
+                    #if debug:
+                        #print(f"Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
                     continue
                 exp_value = data_parts[data_index].strip()
                 if exp_value:
@@ -240,11 +225,11 @@ def extract_multi(lines, file_path, assay, debug=False):
                         common_header: common_value,
                         experiments[exp_name]['header']: exp_value
                     })
-                    if debug:
-                        print(f"File Reader: Line {line_number}: Added data to {exp_name}")
-                else:
-                    if debug:
-                        print(f"File Reader: Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
+                    #if debug:
+                        #print(f"Line {line_number}: Added data to {exp_name}")
+                #else:
+                    #if debug:
+                        #print(f"Line {line_number}: Missing value for {exp_name}. Skipping this data point.")
     
     # Add ASSAY to metadata
     metadata['ASSAY'] = assay
@@ -270,18 +255,19 @@ def extract_multi(lines, file_path, assay, debug=False):
                     merged_df.drop(columns=cols_to_drop, inplace=True)
                     consolidated_experiments[exp_name] = merged_df
                     if debug:
-                        print(f"File Reader: Merged DataFrames for experiment: {exp_name} due to differing columns.")
+                        print(f"Merged DataFrames for experiment: {exp_name} due to differing columns.")
                 else:
                     # If columns are same, append rows
                     consolidated_experiments[exp_name] = pd.concat([existing_df, df], ignore_index=True)
                     if debug:
-                        print(f"File Reader: Appended rows to existing experiment: {exp_name}")
+                        print(f"Appended rows to existing experiment: {exp_name}")
             else:
                 consolidated_experiments[exp_name] = df
                 if debug:
-                    print(f"File Reader: Added experiment to consolidated_experiments: {exp_name}")
+                    print(f"Added experiment to consolidated_experiments: {exp_name}")
         else:
             if debug:
-                print(f"File Reader: Experiment {exp_name} has no complete data and will be excluded.")
+                print(f"Experiment {exp_name} has no complete data and will be excluded.")
     
     return metadata, consolidated_experiments
+
