@@ -120,45 +120,43 @@ def extract_single(lines, file_path, assay, debug=False):
         return metadata, None
 
 def extract_multi(lines, file_path, assay, debug=False):
-    """
-    Extract data from multi-format files representing multiple experiments.
-    """
-    import warnings
+    import numpy as np
+    import pandas as pd
+    from pathlib import Path
+    from pprint import pprint
 
     metadata = {}
     experiments = {}
     common_header = None
     experiment_headers = []
     num_experiments = 0
+    expected_columns = 0
 
     for line_number, line in enumerate(lines, 1):
         line = line.strip()
 
-        # Metadata lines start with one # and not ##
+        # Handle metadata lines (start with '#' and not '##')
         if line.startswith('#') and not line.startswith('##'):
             parts = line[1:].split('\t')
             if not parts:
-                continue  # Skip empty metadata lines
+                continue
 
             key = parts[0].strip()
-            values = parts[1:]  # Everything after the first tab-separated value
+            values = parts[1:]
 
             if debug:
                 print(f"Line {line_number}: Metadata Key: '{key}', Values: {values}")
 
-            # If this is the FILE: key, initialize experiment names
+            # Initialize experiments from FILE: line
             if key.upper() == 'FILE:' and not experiments:
-                print(f"Line {line_number}: Detected FILE metadata. Initializing experiments.")
                 num_experiments = len(values)
                 for i, file_name in enumerate(values):
                     exp_name = file_name.strip() if file_name.strip() else f"Experiment_{i+1}"
                     experiments[exp_name] = {
-                        'metadata': {},
+                        'metadata': {'FILE:': exp_name},  # Initialize FILE: metadata
                         'data': []
                     }
-                    if debug:
-                        print(f"Initialized experiment '{exp_name}' from FILE key.")
-                continue  # Skip to next line after initializing experiments
+                continue
 
             # Assign metadata to experiments
             if num_experiments and len(values) < num_experiments:
@@ -169,16 +167,16 @@ def extract_multi(lines, file_path, assay, debug=False):
                 experiments[exp_name]['metadata'][key] = value
                 if debug:
                     print(f"Line {line_number}: Metadata - {key}: {value} (Experiment: {exp_name})")
+
             continue
 
-        # Column headers line starts with ##
+        # Handle column header line (starts with '##')
         if line.startswith('##') and not experiment_headers:
-            headers = line[2:].split('\t')  # Extract headers
-            expected_columns = len(headers)  # Define expected columns here
+            headers = line[2:].split('\t')
+            expected_columns = len(headers)
             if debug:
                 print(f"Line {line_number}: Column Headers: {headers}")
 
-            # Determine the common header dynamically
             common_header = extract_common_header(headers, debug=debug)
             if not common_header:
                 if debug:
@@ -189,7 +187,7 @@ def extract_multi(lines, file_path, assay, debug=False):
                 common_header_idx = headers.index(common_header)
             except ValueError:
                 if debug:
-                    print(f"Line {line_number}: Common header '{common_header}' not found in headers. Skipping file.")
+                    print(f"Line {line_number}: Common header '{common_header}' not found. Skipping file.")
                 return metadata, None
 
             experiment_headers = headers[:common_header_idx] + headers[common_header_idx + 1:]
@@ -199,50 +197,51 @@ def extract_multi(lines, file_path, assay, debug=False):
 
             continue
 
-        # Process data lines
+        # Handle data lines
         if experiment_headers and not line.startswith('#'):
             data_parts = line.split('\t')
 
+            # Pad missing values if row is incomplete
             if len(data_parts) < expected_columns:
                 data_parts.extend([np.nan] * (expected_columns - len(data_parts)))
-                print(f"Line {line_number}: Incomplete data. Expected {expected_columns} columns, got {len(data_parts)}. Padded data parts: {data_parts}")
+                if debug:
+                    print(f"Line {line_number}: Incomplete data. Expected {expected_columns} columns, got {len(data_parts)}. Padded: {data_parts}")
 
-            try:
-                common_value = data_parts[common_header_idx].strip() if isinstance(data_parts[common_header_idx], str) else np.nan
-            except IndexError:
-                print(f"Line {line_number}: Failed to extract common value. Skipping line.")
-                continue
+            # Extract common header value
+            common_value = data_parts[common_header_idx].strip() if isinstance(data_parts[common_header_idx], str) else np.nan
 
+            # Assign data to each experiment
+            # Use experiment_headers[i] for the experiment-specific column name
             for i, exp_name in enumerate(experiments.keys()):
-                data_index = i + 1  # +1 to account for common_header
+                data_index = i + 1  # +1 for common_header
                 if data_index >= len(data_parts):
                     if debug:
-                        print(f"Line {line_number}: Missing value for '{exp_name}'. Skipping this data point.")
+                        print(f"Line {line_number}: Missing value for '{exp_name}'. Skipping.")
                     continue
 
                 raw_value = data_parts[data_index]
                 exp_value = raw_value.strip() if isinstance(raw_value, str) else np.nan
 
-                experiments[exp_name]['data'].append({
-                    common_header: common_value,
-                    exp_name: exp_value
-                })
+                # Build data dict
+                data_dict = {common_header: common_value}
+                # Add column only if exp_value is not empty
+                if exp_value and exp_value != '':
+                    data_dict[experiment_headers[i]] = exp_value
 
+                experiments[exp_name]['data'].append(data_dict)
+
+    # Add ASSAY to metadata
     metadata['ASSAY'] = assay
 
+    # Consolidate experiments into DataFrames
     consolidated_experiments = {}
     for exp_name, exp_info in experiments.items():
-        print(f"Processing experiment '{exp_name}'...")
         df = pd.DataFrame(exp_info['data'])
         if not df.empty:
             consolidated_experiments[exp_name] = df
-            if debug:
-                print(f"Consolidated data for '{exp_name}':")
-                print(df.head())
-        else:
-            if debug:
-                print(f"Experiment '{exp_name}' has no data. Skipping.")
+
+    # Output the final experiments dictionary structure
     print("Final experiments structure:")
-    pprint(experiments)
+    pprint(consolidated_experiments)
 
     return metadata, consolidated_experiments
