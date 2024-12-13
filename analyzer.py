@@ -41,14 +41,21 @@ def analyze(csv_path, debug=False):
 
 def main():
     """
-    Main function to handle command-line arguments and initiate analysis.
+    Dummy analyzer that passes the CSV file to plotter.py.
     """
-    if len(sys.argv) != 2:
-        print("Usage: python analyzer.py <path_to_csv_file>")
+    if len(sys.argv) < 2:
+        print("Analyzer: No CSV file provided.")
         sys.exit(1)
 
-    csv_path = sys.argv[1]
-    analyze(csv_path, debug=True)  # Set debug=True for detailed logs
+    csv_file = sys.argv[1]
+    print(f"Analyzer: Received {csv_file} for analysis.")
+
+    try:
+        print(f"Analyzer: Calling plotter.py for {csv_file}")
+        subprocess.run([sys.executable, "plotter.py", csv_file], check=True)
+        print(f"Analyzer: Plotter completed for {csv_file}")
+    except subprocess.CalledProcessError as e:
+        print(f"Analyzer: Plotter failed for {csv_file} with error: {e}")
 
 if __name__ == "__main__":
     main()

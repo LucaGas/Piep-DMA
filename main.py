@@ -7,7 +7,6 @@ import subprocess
 import sys
 import pandas as pd
 import numpy as np
-from pprint import pprint
 
 def prepare(debug=False):
     """
@@ -29,8 +28,11 @@ def process(debug=False):
     """
     Process multiple data files and unify experiments if needed.
 
-    If two files have the same experiment (#FILE:) but different sets of columns,
-    they will be merged into a single DataFrame. The merge is done on the common header (e.g., Temp./°C).
+    Generate CSVs with the following structure:
+    - First columns: experiment data (as they are).
+    - One empty column.
+    - One column for metadata property names.
+    - One column for corresponding metadata values.
     """
     if debug:
         print("Running process logic...")
@@ -41,14 +43,6 @@ def process(debug=False):
     if debug:
         print(f"Output directory '{output_dir}' is ready.")
 
-    # Global structure to hold all experiments from all files:
-    # all_consolidated_experiments = {
-    #    exp_name: {
-    #       'metadata': {...},         # The most recent or merged metadata if needed
-    #       'data': DataFrame(...)     # Merged DataFrame across files
-    #    },
-    #    ...
-    # }
     all_consolidated_experiments = {}
 
     for file_path in data_dir.rglob("*.txt"):
@@ -62,84 +56,74 @@ def process(debug=False):
 
         metadata, data = read_file(file_path, assay=assay, debug=debug)
 
-        # metadata is global to the file
         if metadata and debug:
             print("\nGlobal Metadata:")
             for key, value in metadata.items():
                 print(f"  {key}: {value}")
 
         if data is not None and isinstance(data, dict):
-            # data = {
-            #   'ExperimentName': {
-            #       'metadata': {...},
-            #       'data': DataFrame
-            #   }
-            # }
             for exp_name, exp_info in data.items():
                 new_df = exp_info['data']
                 new_metadata = exp_info['metadata']
 
                 if exp_name in all_consolidated_experiments:
-                    # Merge with existing DataFrame
+                    # Concatenate horizontally if the experiment already exists
                     existing_info = all_consolidated_experiments[exp_name]
                     existing_df = existing_info['data']
-                    # Identify common header - assume the first column is common or known
-                    # If we have a known common header like 'Temp./°C', identify it in both DataFrames
-                    # Here we assume both have a common header. Let's guess it's one of the DataFrame's first column
-                    # Ideally, we know the common_header from the data
-                    common_headers = set(existing_df.columns).intersection(set(new_df.columns))
-                    # Find a common header like 'Temp' or 'Time'
-                    # If known, we can guess:
-                    possible_common_headers = [c for c in common_headers if 'temp' in c.lower() or 'time' in c.lower()]
-                    if not possible_common_headers:
-                        # fallback to first column of existing or new_df
-                        common_col = existing_df.columns[0]
-                    else:
-                        common_col = possible_common_headers[0]
+                    concatenated_df = pd.concat([existing_df, new_df], axis=1)
 
-                    # Perform outer merge on the common column
-                    merged_df = pd.merge(existing_df, new_df, on=common_col, how='outer')
-                    # Update metadata by merging or just keeping the old and update keys from new_metadata
+                    # Merge metadata
                     merged_metadata = {**existing_info['metadata'], **new_metadata}
-                    all_consolidated_experiments[exp_name]['data'] = merged_df
+                    all_consolidated_experiments[exp_name]['data'] = concatenated_df
                     all_consolidated_experiments[exp_name]['metadata'] = merged_metadata
-                    if debug:
-                        print(f"Merged experiment '{exp_name}' from file '{file_path.name}'.")
                 else:
                     # Add new experiment entry
+                    combined_metadata = {**metadata, **new_metadata}
                     all_consolidated_experiments[exp_name] = {
-                        'metadata': {**metadata, **new_metadata},  # Combine global file-level and experiment-level metadata
+                        'metadata': combined_metadata,
                         'data': new_df
                     }
-                    if debug:
-                        print(f"Added new experiment '{exp_name}' from file '{file_path.name}'.")
-        else:
-            if debug:
-                print("No data extracted or data not in dictionary format.")
 
     # After processing all files, save all experiments
     for exp_name, exp_info in all_consolidated_experiments.items():
-        assay = exp_info['metadata'].get('ASSAY', 'Unknown_Assay')
+        df = exp_info['data']
+        experiment_metadata = exp_info['metadata']
+
+        # Prepare metadata DataFrame
+        metadata_rows = {
+            "Metadata Property": list(experiment_metadata.keys()),
+            "Metadata Value": list(experiment_metadata.values())
+        }
+        metadata_df = pd.DataFrame(metadata_rows)
+
+        # Add an empty column to the main DataFrame
+        df[""] = ""  # Empty column as a placeholder
+
+        # Concatenate the metadata to the right side of the DataFrame
+        final_df = pd.concat([df, metadata_df], axis=1)
+
+        # Save the final DataFrame
+        assay = experiment_metadata.get("ASSAY", "Unknown_Assay")
         assay_output_dir = output_dir / assay
         assay_output_dir.mkdir(parents=True, exist_ok=True)
 
-        df = exp_info['data']
-        # Integrate all metadata into the DataFrame as columns if you wish
-        # For demonstration, just integrate metadata keys
-        for k, v in exp_info['metadata'].items():
-            df[k] = v
-
         safe_exp_name = exp_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
         output_file = assay_output_dir / f"{safe_exp_name}.csv"
-        df.to_csv(output_file, index=False)
+        final_df.to_csv(output_file, index=False)
 
         if debug:
-            print(f"Saved consolidated DataFrame for '{exp_name}' to {output_file}")
+            print(f"Saved final DataFrame for '{exp_name}' to {output_file}")
 
-    if debug:
-        print("\nFinal consolidated experiments structure:")
-        pprint(all_consolidated_experiments)
-
+        # Call analyzer.py with the path to the saved CSV
+        try:
+            if debug:
+                print(f"Calling analyzer.py for {output_file}")
+            subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
+            if debug:
+                print(f"Analyzer completed for {output_file}")
+        except subprocess.CalledProcessError as e:
+            print(f"Analyzer failed for {output_file} with error: {e}")
+            
 def main():
     """
     Parse command-line arguments and execute the corresponding functions.
