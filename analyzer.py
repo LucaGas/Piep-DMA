@@ -6,6 +6,40 @@ import subprocess
 from pathlib import Path
 import re
 
+def find_onset(x_data, y_data, debug=False):
+    """
+    Detect the onset point in the data.
+
+    Parameters:
+    - x_data (Series): The X-axis data (e.g., temperature).
+    - y_data (Series): The Y-axis data (e.g., Eprime values).
+    - debug (bool): Enable debug logging.
+
+    Returns:
+    - float: The X-value corresponding to the onset, or None if not found.
+    """
+    try:
+        # Calculate the first derivative of the Y-axis data
+        dy_dx = y_data.diff() / x_data.diff()
+
+        # Detect where the derivative exceeds a threshold (onset criterion)
+        threshold = dy_dx.mean() + 2 * dy_dx.std()  # Example criterion
+        onset_index = dy_dx[dy_dx > threshold].first_valid_index()
+
+        if onset_index is not None:
+            onset_x = x_data.iloc[onset_index]
+            if debug:
+                print(f"Find Onset: Detected onset at index {onset_index}, X = {onset_x}")
+            return onset_x
+        else:
+            if debug:
+                print("Find Onset: No significant change detected.")
+            return None
+    except Exception as e:
+        if debug:
+            print(f"Find Onset: Error during onset detection: {e}")
+        return None
+
 def analyze_temperature_sweep(data, debug=False):
     """
     Analyze data specific to 'Temperature Sweep' ASSAY.
@@ -18,28 +52,42 @@ def analyze_temperature_sweep(data, debug=False):
         print("Analyze Temperature Sweep: Received the following data:")
         print(data.head())
 
-    # Debug column names
-    if debug:
-        print("Analyze Temperature Sweep: Column names:")
-        for col in data.columns:
-            print(f"'{col}'")
-
     # Clean column names (trim whitespace and standardize encoding)
     cleaned_columns = [col.strip() for col in data.columns]
+    data.columns = cleaned_columns  # Update DataFrame with cleaned column names
+
+    # Identify the X-axis column (first column)
+    x_column = data.columns[0]
+    x_data = pd.to_numeric(data[x_column], errors='coerce').dropna()
+    if debug:
+        print(f"Analyze Temperature Sweep: Identified X-axis column: '{x_column}'")
+        print(f"Analyze Temperature Sweep: X-axis data:\n{x_data.head()}")
 
     # Check for columns containing "E'"
-    eprime_columns = [
-        col for col in cleaned_columns if re.search(r"E'", col)
-    ]
-    if eprime_columns:
-        print("Eprime found")
-        if debug:
-            print(f"Analyze Temperature Sweep: Identified 'Eprime' columns: {eprime_columns}")
-    else:
-        if debug:
-            print("Analyze Temperature Sweep: No 'Eprime' columns found.")
+    eprime_columns = [col for col in cleaned_columns if re.search(r"E'", col)]
+    if not eprime_columns:
+        print("Analyze Temperature Sweep: No 'Eprime' columns found.")
+        return
 
-    # Placeholder for further analysis
+    print("Eprime found")
+    if debug:
+        print(f"Analyze Temperature Sweep: Identified 'Eprime' columns: {eprime_columns}")
+
+    # Analyze onset for each E' column
+    for eprime_column in eprime_columns:
+        y_data = pd.to_numeric(data[eprime_column], errors='coerce').dropna()
+        if debug:
+            print(f"Analyze Temperature Sweep: Analyzing onset for '{eprime_column}'")
+            print(f"Y-axis data:\n{y_data.head()}")
+
+        # Perform onset analysis
+        onset_x = find_onset(x_data, y_data, debug=debug)
+
+        if onset_x is not None:
+            print(f"Analyze Temperature Sweep: Onset detected for '{eprime_column}' at X = {onset_x}")
+        else:
+            print(f"Analyze Temperature Sweep: No onset detected for '{eprime_column}'.")
+
     print("Analyze Temperature Sweep: Analysis complete.")
 
 
