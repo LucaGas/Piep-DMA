@@ -80,10 +80,42 @@ def find_onset(x_data, y_data, debug=False):
         if debug:
             print(f"Find Onset: Error during onset detection: {e}")
         return None
+def find_peak(x_data, y_data, debug=False):
+    """
+    Detect the peak in the data (maximum Y value) and return the corresponding X value.
+
+    Parameters:
+    - x_data (Series): The X-axis data (e.g., temperature).
+    - y_data (Series): The Y-axis data (e.g., E'' or tan δ).
+    - debug (bool): Enable debug logging.
+
+    Returns:
+    - (float, float): The X value at the peak and the peak Y value, or (None, None) if no peak is found.
+    """
+    try:
+        # Ensure valid data
+        if y_data.empty or x_data.empty:
+            if debug:
+                print("Find Peak: X or Y data is empty.")
+            return None, None
+
+        # Find the peak (maximum Y value)
+        peak_idx = y_data.idxmax()
+        peak_x = x_data.iloc[peak_idx]
+        peak_y = y_data.iloc[peak_idx]
+
+        if debug:
+            print(f"Find Peak: Peak detected at X = {peak_x}, Y = {peak_y}")
+        return peak_x, peak_y
+    except Exception as e:
+        if debug:
+            print(f"Find Peak: Error during peak detection: {e}")
+        return None, None
 
 def analyze_temperature_sweep(data, debug=False):
     """
-    Analyze data specific to 'Temperature Sweep' ASSAY and save results.
+    Analyze data specific to 'Temperature Sweep' ASSAY.
+    Perform onset analysis for E' and peak analysis for E'' and tan δ.
 
     Parameters:
     - data (DataFrame): The loaded CSV data.
@@ -104,18 +136,28 @@ def analyze_temperature_sweep(data, debug=False):
         print(f"Analyze Temperature Sweep: Identified X-axis column: '{x_column}'")
         print(f"Analyze Temperature Sweep: X-axis data:\n{x_data.head()}")
 
-    # Check for columns containing "E'"
+    # Track completed analyses
+    if "Metadata Property" in data.columns:
+        completed_analyses = data[data["Metadata Property"] == "Completed Analyses"]
+        if not completed_analyses.empty:
+            completed_analyses_list = completed_analyses.iloc[0, 1]
+            if isinstance(completed_analyses_list, str):
+                completed_analyses_list = completed_analyses_list.split(", ")
+            else:
+                completed_analyses_list = []
+        else:
+            completed_analyses_list = []
+    else:
+        completed_analyses_list = []
+
+    # Analyze onset for E' columns
     eprime_columns = [col for col in cleaned_columns if re.search(r"E'", col)]
-    if not eprime_columns:
-        print("Analyze Temperature Sweep: No 'Eprime' columns found.")
-        return
-
-    print("Eprime found")
-    if debug:
-        print(f"Analyze Temperature Sweep: Identified 'Eprime' columns: {eprime_columns}")
-
-    # Analyze onset for each E' column
     for eprime_column in eprime_columns:
+        analysis_name = f"Onset of {eprime_column}"
+        if analysis_name in completed_analyses_list:
+            print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
+            continue
+
         y_data = pd.to_numeric(data[eprime_column], errors='coerce').dropna()
         if debug:
             print(f"Analyze Temperature Sweep: Analyzing onset for '{eprime_column}'")
@@ -126,16 +168,50 @@ def analyze_temperature_sweep(data, debug=False):
 
         if onset_x is not None:
             print(f"Analyze Temperature Sweep: Onset detected for '{eprime_column}' at X = {onset_x}")
-            # Save the onset result in the DataFrame
             data = save_results(
                 data=data,
                 metadata_property_column="Metadata Property",
-                analysis_name=f"Onset of {eprime_column}",
+                analysis_name=analysis_name,
                 analysis_value=onset_x,
                 debug=debug
             )
-        else:
-            print(f"Analyze Temperature Sweep: No onset detected for '{eprime_column}'.")
+            completed_analyses_list.append(analysis_name)
+
+    # Analyze peaks for E'' and tan δ
+    for pattern, label in [(r"E''", "Edoubleprime"), (r"tan ?δ|tan d", "Tand")]:
+        matching_columns = [col for col in cleaned_columns if re.search(pattern, col, re.IGNORECASE)]
+        for column in matching_columns:
+            analysis_name = f"Peak of {column}"
+            if analysis_name in completed_analyses_list:
+                print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
+                continue
+
+            # Perform peak analysis
+            y_data = pd.to_numeric(data[column], errors='coerce').dropna()
+            peak_x, peak_y = find_peak(x_data, y_data, debug=debug)
+
+            if peak_x is not None and peak_y is not None:
+                print(f"Analyze Temperature Sweep: Peak detected for '{column}' at X = {peak_x}, Y = {peak_y}")
+                data = save_results(
+                    data=data,
+                    metadata_property_column="Metadata Property",
+                    analysis_name=analysis_name,
+                    analysis_value=f"X: {peak_x}, Y: {peak_y}",
+                    debug=debug
+                )
+                completed_analyses_list.append(analysis_name)
+
+    # Update the "Completed Analyses" metadata
+    if "Completed Analyses" in data["Metadata Property"].values:
+        data.loc[data["Metadata Property"] == "Completed Analyses", "Value"] = ", ".join(completed_analyses_list)
+    else:
+        data = save_results(
+            data=data,
+            metadata_property_column="Metadata Property",
+            analysis_name="Completed Analyses",
+            analysis_value=", ".join(completed_analyses_list),
+            debug=debug
+        )
 
     print("Analyze Temperature Sweep: Analysis complete.")
     return data
