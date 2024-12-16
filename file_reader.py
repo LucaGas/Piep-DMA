@@ -238,4 +238,3 @@ def extract_multi(lines, file_path, assay, debug=False):
     pprint(consolidated_experiments)
 
     return metadata, consolidated_experiments
-
