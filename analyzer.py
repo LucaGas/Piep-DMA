@@ -6,6 +6,47 @@ import subprocess
 from pathlib import Path
 import re
 
+def save_results(data, metadata_property_column, analysis_name, analysis_value, debug=False):
+    """
+    Save the results of the analysis in the first empty cell of the 'Metadata Property' column.
+    
+    Parameters:
+    - data (DataFrame): The DataFrame containing the data.
+    - metadata_property_column (str): The name of the 'Metadata Property' column.
+    - analysis_name (str): The name of the analysis (e.g., "Onset of E'").
+    - analysis_value (float): The value of the analysis (e.g., the onset X value).
+    - debug (bool): Enable debug logging.
+    
+    Returns:
+    - DataFrame: Updated DataFrame with the results saved.
+    """
+    try:
+        # Ensure the 'Metadata Property' column exists
+        if metadata_property_column not in data.columns:
+            print(f"save_results: Column '{metadata_property_column}' not found in DataFrame.")
+            return data
+
+        # Find the first empty cell in the 'Metadata Property' column
+        empty_row_idx = data[metadata_property_column].isnull().idxmax()
+        if pd.notna(data.at[empty_row_idx, metadata_property_column]):
+            # No empty rows found; append a new row at the end
+            empty_row_idx = len(data)
+
+        # Add the analysis name and value to the DataFrame
+        data.at[empty_row_idx, metadata_property_column] = analysis_name
+        value_column_idx = data.columns.get_loc(metadata_property_column) + 1
+        value_column = data.columns[value_column_idx]
+        data.at[empty_row_idx, value_column] = analysis_value
+
+        if debug:
+            print(f"save_results: Saved '{analysis_name}' with value '{analysis_value}' at row {empty_row_idx}.")
+        return data
+
+    except Exception as e:
+        print(f"save_results: Error occurred while saving results: {e}")
+        return data
+
+
 def find_onset(x_data, y_data, debug=False):
     """
     Detect the onset point in the data.
@@ -42,7 +83,7 @@ def find_onset(x_data, y_data, debug=False):
 
 def analyze_temperature_sweep(data, debug=False):
     """
-    Analyze data specific to 'Temperature Sweep' ASSAY.
+    Analyze data specific to 'Temperature Sweep' ASSAY and save results.
 
     Parameters:
     - data (DataFrame): The loaded CSV data.
@@ -85,10 +126,19 @@ def analyze_temperature_sweep(data, debug=False):
 
         if onset_x is not None:
             print(f"Analyze Temperature Sweep: Onset detected for '{eprime_column}' at X = {onset_x}")
+            # Save the onset result in the DataFrame
+            data = save_results(
+                data=data,
+                metadata_property_column="Metadata Property",
+                analysis_name=f"Onset of {eprime_column}",
+                analysis_value=onset_x,
+                debug=debug
+            )
         else:
             print(f"Analyze Temperature Sweep: No onset detected for '{eprime_column}'.")
 
     print("Analyze Temperature Sweep: Analysis complete.")
+    return data
 
 
 def analyze(csv_path, debug=False):
@@ -124,20 +174,12 @@ def analyze(csv_path, debug=False):
         # If ASSAY is 'Temperature Sweep', call the analyze_temperature_sweep function
         if assay_value == "Temperature Sweep":
             print("Analyzer: Detected 'Temperature Sweep'. Passing data to analyze_temperature_sweep.")
-            analyze_temperature_sweep(data, debug=debug)
+            data = analyze_temperature_sweep(data, debug=debug)
 
-        # Placeholder for future analysis logic
-        print(f"Analyzer: Successfully analyzed '{csv_path}'.")
-
-        # Call plotter.py with the path to the saved CSV
-        try:
-            if debug:
-                print(f"Analyzer: Calling plotter.py for '{csv_path}'")
-            subprocess.run([sys.executable, "plotter.py", str(csv_path)], check=True)
-            if debug:
-                print(f"Analyzer: Plotter completed for '{csv_path}'")
-        except subprocess.CalledProcessError as e:
-            print(f"Analyzer Error: Plotter failed for '{csv_path}' with error: {e}")
+            # Save the updated DataFrame to a new CSV file
+            output_file = csv_path.replace(".csv", "_analyzed.csv")
+            data.to_csv(output_file, index=False)
+            print(f"Analyzer: Results saved to '{output_file}'.")
 
     except FileNotFoundError:
         print(f"Analyzer Error: The file '{csv_path}' does not exist.")
