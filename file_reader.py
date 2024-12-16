@@ -56,6 +56,25 @@ def extract_common_header(headers, debug=False):
             print("No headers found to identify common header.")
         return None
 
+def sanitize_column_name(col_name):
+    """
+    Sanitize column names by replacing specific unwanted substrings with desired ones.
+    
+    Parameters:
+        col_name (str): The original column name.
+    
+    Returns:
+        str: The sanitized column name.
+    """
+    replacements = {
+        'Temp./�C': 'Temp ºC',
+        '"E""(1.000 Hz)/MPa"': "E'' (1.000 Hz) MPa",
+        "E'(1.000 Hz)/MPa": "E' (1.000 Hz) MPa",
+        # Add more replacements as needed
+    }
+    return replacements.get(col_name, col_name)
+
+
 def extract_single(lines, file_path, assay, debug=False):
     """
     Extract data from single format files.
@@ -101,6 +120,10 @@ def extract_single(lines, file_path, assay, debug=False):
     # Create DataFrame
     if column_headers and data_lines:
         data_df = pd.DataFrame(data_lines, columns=column_headers)
+        
+        # Sanitize column names
+        data_df.columns = [sanitize_column_name(col) for col in data_df.columns]
+        
         experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', 'Unknown_File')}"
         return metadata, {experiment_name: data_df}
     else:
@@ -206,7 +229,13 @@ def extract_multi(lines, file_path, assay, debug=False):
     # Add ASSAY to metadata
     metadata['ASSAY'] = assay
 
+    # Sanitize column names for each experiment's DataFrame
+    for exp_name, exp_data in consolidated_experiments.items():
+        if exp_data['data'] is not None and not exp_data['data'].empty:
+            exp_data['data'].columns = [sanitize_column_name(col) for col in exp_data['data'].columns]
+
     print("Final experiments structure:")
     pprint(consolidated_experiments)
 
     return metadata, consolidated_experiments
+

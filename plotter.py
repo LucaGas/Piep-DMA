@@ -16,12 +16,12 @@ def sanitize_column_name(column_name):
 
     sanitized_name = (
         column_name.replace(' ', ' ')
-        .replace('E"', 'E5678')
-        .replace("E5678","E''")
+        #.replace('E"', 'E5678')
+        #.replace("E5678","E''")
         #.replace("E'", "E1234")
-        .replace('"', '')
-        .replace("/", " ")
-        .replace("°", "º")
+        #.replace('"', '')
+        #.replace("/", " ")
+        #.replace("°", "º")
         #.replace("(", "")
         #.replace(")", "")
         .replace("�", "°")  # Handle encoding errors
