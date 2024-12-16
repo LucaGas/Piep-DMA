@@ -6,33 +6,18 @@ import re
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG, format='%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
-
-def map_column_name(y_column):
-    """
-    Replace specific substrings in column names with desired labels.
-    
-    Parameters:
-    - y_column (str): Original column name.
-    
-    Returns:
-    - str: Modified column name with replacements.
-    """
-    # Replace E'' with Edoubleprime and E' with Eprime
-    y_column = y_column.replace("E''", "Edoubleprime")
-    y_column = y_column.replace("E'", "Eprime")
-    
-    # Optionally, handle other replacements if needed
-    # Example: Replace "tan d" with "tan_delta"
-    y_column = y_column.replace("tan d", "tan_delta")
-    
-    return y_column
-
 
 def sanitize_column_name(column_name):
     """
     Sanitize column names by replacing problematic characters.
+    
+    Parameters:
+    - column_name (str): Original column name.
+    
+    Returns:
+    - str: Sanitized column name.
     """
     if not isinstance(column_name, str):
         return column_name
@@ -57,20 +42,26 @@ def sanitize_dataframe(df, debug=False):
     """
     # Drop entirely empty columns
     df = df.dropna(axis=1, how='all')
+    if debug:
+        logger.debug("Dropped empty columns.")
 
     # Fill remaining NaN values with placeholders
     df = df.fillna("")
+    if debug:
+        logger.debug("Filled NaN values with empty strings.")
 
     # Convert numeric columns where possible
     for col in df.columns:
         try:
             df[col] = pd.to_numeric(df[col])
+            if debug:
+                logger.debug(f"Converted column '{col}' to numeric.")
         except ValueError:
             if debug:
                 logger.debug(f"Could not convert column '{col}' to numeric. Keeping it as-is.")
 
     if debug:
-        logger.debug("Sanitized DataFrame:")
+        logger.debug("Sanitized DataFrame Head:")
         logger.debug(df.head())
 
     return df
@@ -101,6 +92,31 @@ def identify_x_axis(df):
     logger.warning("No X-axis column found containing 'Temp' or 'Time'.")
     return None
 
+def map_column_name(y_column):
+    """
+    Replace specific substrings in column names with desired labels based on a predefined mapping.
+
+    Parameters:
+    - y_column (str): Original column name.
+
+    Returns:
+    - str: Modified column name with replacements.
+    """
+    # Define your mappings here
+    replacements = {
+        "E''": "Edoubleprime",
+        "E'": "Eprime",
+        "tan d": "tan_delta",
+        "tanδ": "tan_delta",
+        # Add more mappings as needed
+    }
+    
+    for original, replacement in replacements.items():
+        # Use case-insensitive replacement
+        y_column = re.sub(re.escape(original), replacement, y_column, flags=re.IGNORECASE)
+    
+    return y_column
+
 def plot_temperature_sweep(csv_file, debug=False):
     """
     Plot data from a CSV file where Y-axis values are plotted against the primary X-axis column ('Temp' or 'Time').
@@ -113,6 +129,7 @@ def plot_temperature_sweep(csv_file, debug=False):
     try:
         # Load the CSV file
         df = pd.read_csv(csv_file)
+        logger.info(f"Loaded CSV file: {csv_file}")
 
         # Sanitize column names
         df.columns = [sanitize_column_name(col) for col in df.columns]
@@ -130,16 +147,15 @@ def plot_temperature_sweep(csv_file, debug=False):
 
         # Extract analysis results from the metadata
         analysis_results = {}
-        if "Metadata Property" in df.columns:
+        if "Metadata Property" in df.columns and "Metadata Value" in df.columns:
             metadata_property_index = df.columns.get_loc("Metadata Property")  # Find the column index
-            value_column_index = metadata_property_index + 1  # The next column index
+            value_column_index = df.columns.get_loc("Metadata Value")  # Find the corresponding value column
 
-            if value_column_index < len(df.columns):  # Ensure we don't go out of bounds
-                metadata_rows = df[df["Metadata Property"].notna()]
-                for _, row in metadata_rows.iterrows():
-                    key = str(row["Metadata Property"]).strip()
-                    value = row.iloc[value_column_index]
-                    analysis_results[key] = value
+            metadata_rows = df[df["Metadata Property"].notna()]
+            for _, row in metadata_rows.iterrows():
+                key = str(row["Metadata Property"]).strip()
+                value = row.iloc[value_column_index]
+                analysis_results[key] = value
 
         # Output the extracted values of Onsets and Peaks
         print("\n--- Extracted Analysis Results ---")
@@ -169,6 +185,15 @@ def plot_temperature_sweep(csv_file, debug=False):
             logger.warning("Plotter: No Y-axis columns found to plot against the X-axis.")
             return
 
+        # Define mappings between Y-axis columns and their corresponding analysis keys
+        column_to_analysis_keys = {
+            "Eprime (1.000 Hz) MPa": ["Onset of Eprime"],
+            "Edoubleprime (1.000 Hz) MPa": ["Peak of Edoubleprime"],
+            "tan_delta(1.000 Hz)": ["Peak of tand"],
+            # Add any additional mappings if necessary
+        }
+
+        print("Starting to process Y-axis columns...")
         # Iterate over Y-axis columns and plot against the X-axis column
         for y_column in y_columns:
             if debug:
@@ -195,22 +220,24 @@ def plot_temperature_sweep(csv_file, debug=False):
             plt.title(f"{y_column} vs {x_column}")
             plt.grid(True)
 
-            # Define mappings between metadata keys and column names
-            metadata_to_column = {
-                "Onset of Eprime": [col for col in df.columns if re.search(r"Eprime|E'", col, re.IGNORECASE)],
-                "Peak of Edoubleprime": [col for col in df.columns if re.search(r"Edoubleprime|E''", col, re.IGNORECASE)],
-                "Peak of tand": [col for col in df.columns if re.search(r"tand|tan ?d|tan ?δ", col, re.IGNORECASE)],
-            }
+            # Map the y_column name to desired label
+            mapped_y_column = map_column_name(y_column)
+            # print("Starting to process Y-axis columns...")  # Duplicate print statement removed
+
+            # Sanitize the mapped y_column for logging or other purposes (if needed)
+            sanitized_y_column_log = re.sub(r'[^\w\-_. ]', '_', mapped_y_column)
+
+            # Get relevant analysis keys for the current y_column
+            relevant_analysis_keys = column_to_analysis_keys.get(mapped_y_column, [])
 
             if debug:
-                for key, cols in metadata_to_column.items():
-                    logger.debug(f"Columns mapped to '{key}': {cols}")
+                logger.debug(f"Relevant analysis keys for '{mapped_y_column}': {relevant_analysis_keys}")
 
             # To avoid duplicate legends, use a set to track added labels
             added_legends = set()
 
             # Highlight relevant analysis points
-            for analysis_key, columns in metadata_to_column.items():
+            for analysis_key in relevant_analysis_keys:
                 if analysis_key in analysis_results:
                     analysis_value = str(analysis_results[analysis_key]).strip()
 
@@ -218,69 +245,66 @@ def plot_temperature_sweep(csv_file, debug=False):
                         logger.warning(f"Skipping invalid metadata value for '{analysis_key}': {analysis_value}")
                         continue
 
-                    for column in columns:
-                        if debug:
-                            logger.info(f"Plotter: Highlighting '{analysis_key}' in column '{column}'")
+                    if debug:
+                        logger.info(f"Plotter: Highlighting '{analysis_key}' in column '{y_column}'")
 
-                        # Ensure valid numeric data
-                        x_data_meta = pd.to_numeric(df[x_column], errors='coerce')
-                        y_data_meta = pd.to_numeric(df[column], errors='coerce').dropna()
+                    # Process based on the type of analysis key
+                    if "Onset" in analysis_key:
+                        try:
+                            onset_x = float(analysis_value)
+                            onset_y_index = (x_data - onset_x).abs().argsort()[0]
+                            onset_y = y_data.iloc[onset_y_index]
 
-                        # Onset Highlight (single X value)
-                        if "Onset" in analysis_key:
-                            try:
-                                onset_x = float(analysis_value)
-                                onset_y = y_data.iloc[(x_data - onset_x).abs().argsort()[0]]  # Nearest Y value
+                            plt.scatter(onset_x, onset_y, color='red', label=f"Onset: X={onset_x:.2f}")
+                            y_min, y_max = plt.ylim()
+                            plt.annotate(
+                                f"Onset\n({onset_x:.2f}, {onset_y:.2f})",
+                                xy=(onset_x, onset_y),
+                                xytext=(onset_x, onset_y + 0.05 * (y_max - y_min)),
+                                arrowprops=dict(facecolor='red', arrowstyle="->"),
+                                fontsize=8,
+                                ha='center',
+                            )
+                            plt.axvline(x=onset_x, color='red', linestyle='--', label=f"Onset Line: X={onset_x:.2f}")
+                            # Dynamically adjust the y-axis limits to accommodate annotations
+                            y_min, y_max = plt.ylim()  # Get current y-axis limits
+                            new_y_max = y_max + 0.1 * (y_max - y_min)  # Add 10% extra space to the top
+                            plt.ylim(y_min, new_y_max)  # Set the adjusted y-axis limits
+                        except ValueError as e:
+                            logger.error(f"Plotter: Failed to highlight Onset '{analysis_value}' - {e}")
 
-                                # Check for duplicate legend entry
-                                unique_label = f"Onset: X={onset_x:.2f}"
-                                if unique_label not in added_legends:
-                                    plt.scatter(onset_x, onset_y, color='red', label=unique_label)
-                                    plt.annotate(f"Onset\n({onset_x:.2f}, {onset_y:.2f})",
-                                                xy=(onset_x, onset_y),
-                                                xytext=(onset_x, onset_y + 0.05 * y_data.max()),
-                                                arrowprops=dict(facecolor='red', arrowstyle="->"),
-                                                fontsize=8,
-                                                ha='center')
-                                    added_legends.add(unique_label)
-                            except ValueError as e:
-                                logger.error(f"Plotter: Failed to highlight Onset '{analysis_value}' - {e}")
 
-                        # Peak Highlight (multiple X values)
-                        if "Peak" in analysis_key:
-                            try:
-                                # Extract all X values (handles multiple peaks)
-                                # Adjusted regex to capture different formats
-                                # For example: "Peak at X: 25.3" or "25.3"
-                                # First try to extract using "X: value"
-                                peak_x_matches = re.findall(r"X:\s*([\d\.]+)", analysis_value)
-                                if not peak_x_matches:
-                                    # If no matches, assume the entire value is a single number
-                                    peak_x_matches = re.findall(r"([\d\.]+)", analysis_value)
+                    if "Peak" in analysis_key:
+                        try:
+                            peak_x_matches = re.findall(r"X:\s*([\d\.]+)", analysis_value)
+                            if not peak_x_matches:
+                                peak_x_matches = re.findall(r"([\d\.]+)", analysis_value)
 
-                                for peak_x_str in peak_x_matches:
-                                    peak_x = float(peak_x_str)
-                                    peak_y = y_data.iloc[(x_data - peak_x).abs().argsort()[0]]  # Nearest Y value
+                            for peak_x_str in peak_x_matches:
+                                peak_x = float(peak_x_str)
+                                peak_y_index = (x_data - peak_x).abs().argsort()[0]
+                                peak_y = y_data.iloc[peak_y_index]
 
-                                    # Check for duplicate legend entry
-                                    unique_label = f"{analysis_key}: X={peak_x:.2f}"
-                                    if unique_label not in added_legends:
-                                        plt.scatter(peak_x, peak_y, color='green', label=unique_label)
-                                        plt.annotate(f"Peak\n({peak_x:.2f}, {peak_y:.4f})",
-                                                    xy=(peak_x, peak_y),
-                                                    xytext=(peak_x, peak_y + 0.05 * y_data.max()),
-                                                    arrowprops=dict(facecolor='green', arrowstyle="->"),
-                                                    fontsize=8,
-                                                    ha='center')
-                                        added_legends.add(unique_label)
-                            except ValueError as e:
-                                logger.error(f"Plotter: Failed to highlight Peak '{analysis_value}' - {e}")
+                                plt.scatter(peak_x, peak_y, color='green', label=f"{analysis_key}: X={peak_x:.2f}")
+                                y_min, y_max = plt.ylim()
+                                plt.annotate(
+                                    f"Peak\n({peak_x:.2f}, {peak_y:.5f})",
+                                    xy=(peak_x, peak_y),
+                                    xytext=(peak_x, peak_y + 0.05 * (y_max - y_min)),
+                                    arrowprops=dict(facecolor='green', arrowstyle="->"),
+                                    fontsize=8,
+                                    ha='center',
+                                )
+                                plt.axvline(x=peak_x, color='green', linestyle='--', label=f"Peak Line: X={peak_x:.2f}")
+                                # Dynamically adjust the y-axis limits to accommodate annotations
+                                y_min, y_max = plt.ylim()  # Get current y-axis limits
+                                new_y_max = y_max + 0.1 * (y_max - y_min)  # Add 10% extra space to the top
+                                plt.ylim(y_min, new_y_max)  # Set the adjusted y-axis limits
+                        except ValueError as e:
+                            logger.error(f"Plotter: Failed to highlight Peak '{analysis_value}' - {e}")
 
             # Add legend for highlighted points
             plt.legend()
-
-            # Map the y_column name to desired label
-            mapped_y_column = map_column_name(y_column)
 
             # Sanitize the mapped y_column for filenames
             sanitized_y_column = re.sub(r'[^\w\-_. ]', '_', mapped_y_column)  # Remove problematic characters
@@ -293,7 +317,7 @@ def plot_temperature_sweep(csv_file, debug=False):
 
             if debug:
                 logger.info(f"Plotter: Plot saved to '{output_file}'")
-
+                
     except FileNotFoundError:
         logger.error(f"Plotter: The file '{csv_file}' does not exist.")
     except pd.errors.EmptyDataError:
@@ -302,20 +326,20 @@ def plot_temperature_sweep(csv_file, debug=False):
         logger.error(f"Plotter: An error occurred while processing '{csv_file}': {e}")
 
 def main():
-    """
-    Main function to handle standalone execution of the plotting script.
-    """
-    if len(sys.argv) < 2:
-        print("Plotter: No CSV file provided.")
-        print("Usage: python plotter.py <path_to_csv_file>")
-        sys.exit(1)
+        """
+        Main function to handle standalone execution of the plotting script.
+        """
+        if len(sys.argv) < 2:
+            print("Plotter: No CSV file provided.")
+            print("Usage: python plotter.py <path_to_csv_file>")
+            sys.exit(1)
 
-    csv_file = sys.argv[1]
-    debug = True  # Enable debug mode for additional logging
-    logger.info(f"Plotter: Processing '{csv_file}'")
-
-    # Call the plotting function
-    plot_temperature_sweep(csv_file, debug=debug)
+        csv_file = sys.argv[1]
+        debug = True  # Enable debug mode for additional logging
+        logger.info(f"Plotter: Processing '{csv_file}'")
+        print("Starting to process Y-axis columns...")
+        # Call the plotting function
+        plot_temperature_sweep(csv_file, debug=debug)
 
 if __name__ == "__main__":
-    main()
+        main()
