@@ -289,7 +289,7 @@ def analyze(csv_path, debug=False):
 
 def main():
     """
-    Analyzer that passes the CSV file to plotter.py for plotting.
+    Analyzer that passes the analyzed CSV file to plotter.py for plotting.
     """
     if len(sys.argv) < 2:
         print("Analyzer: No CSV file provided.")
@@ -297,22 +297,26 @@ def main():
 
     csv_file = sys.argv[1]
     print(f"Analyzer: Received '{csv_file}' for analysis.")
-    analyze(csv_file)  # Call the analyze function
+
+    # Perform analysis and get the path to the analyzed CSV
+    analyzed_csv = csv_file.replace(".csv", "_analyzed.csv")
+    analyze(csv_file)  # Call the analyze function, which saves the analyzed CSV
+
     try:
-        # Call plotter.py as a standalone script with the CSV file
-        print(f"Analyzer: Calling plotter.py for {csv_file}")
+        # Call plotter.py as a standalone script with the analyzed CSV file
+        print(f"Analyzer: Calling plotter.py for {analyzed_csv}")
         result = subprocess.run(
-            [sys.executable, "plotter.py", csv_file],
+            [sys.executable, "plotter.py", analyzed_csv],
             check=True,
             capture_output=True,  # Capture stdout and stderr for logging
             text=True  # Decode stdout and stderr as text
         )
-        print(f"Analyzer: Plotter completed for {csv_file}")
+        print(f"Analyzer: Plotter completed for {analyzed_csv}")
         print(f"Plotter Output:\n{result.stdout}")
         if result.stderr:
             print(f"Plotter Warnings/Errors:\n{result.stderr}")
     except subprocess.CalledProcessError as e:
-        print(f"Analyzer: Plotter failed for {csv_file} with error: {e}")
+        print(f"Analyzer: Plotter failed for {analyzed_csv} with error: {e}")
         print(f"Plotter Error Output:\n{e.stderr}")
     except Exception as ex:
         print(f"Analyzer: Unexpected error while calling plotter.py: {ex}")
