@@ -118,7 +118,7 @@ def process(debug=False):
         try:
             if debug:
                 print(f"Calling analyzer.py for {output_file}")
-            #subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
+            subprocess.run([sys.executable, "analyzer.py", str(output_file)], check=True)
             if debug:
                 print(f"Analyzer completed for {output_file}")
         except subprocess.CalledProcessError as e:
