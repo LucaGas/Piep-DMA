@@ -4,8 +4,9 @@ import sys
 import pandas as pd
 import subprocess
 from pathlib import Path
-from pprint import pprint
 import re
+from scipy.signal import find_peaks
+import matplotlib.pyplot as plt
 
 def save_results(data, metadata_property_column, analysis_name, analysis_value, debug=False):
     """
@@ -15,7 +16,7 @@ def save_results(data, metadata_property_column, analysis_name, analysis_value, 
     - data (DataFrame): The DataFrame containing the data.
     - metadata_property_column (str): The name of the 'Metadata Property' column.
     - analysis_name (str): The name of the analysis (e.g., "Onset of E'").
-    - analysis_value (float): The value of the analysis (e.g., the onset X value).
+    - analysis_value (float or str): The value of the analysis (e.g., the onset X value or a string description).
     - debug (bool): Enable debug logging.
     
     Returns:
@@ -35,9 +36,15 @@ def save_results(data, metadata_property_column, analysis_name, analysis_value, 
 
         # Add the analysis name and value to the DataFrame
         data.at[empty_row_idx, metadata_property_column] = analysis_name
+        # Assuming the 'Value' column is next to 'Metadata Property'
         value_column_idx = data.columns.get_loc(metadata_property_column) + 1
-        value_column = data.columns[value_column_idx]
-        data.at[empty_row_idx, value_column] = analysis_value
+        if value_column_idx < len(data.columns):
+            value_column = data.columns[value_column_idx]
+            data.at[empty_row_idx, value_column] = analysis_value
+        else:
+            # If 'Value' column doesn't exist, add it
+            data['Value'] = None
+            data.at[empty_row_idx, 'Value'] = analysis_value
 
         if debug:
             print(f"save_results: Saved '{analysis_name}' with value '{analysis_value}' at row {empty_row_idx}.")
@@ -48,43 +55,45 @@ def save_results(data, metadata_property_column, analysis_name, analysis_value, 
         return data
 
 
-def find_onset(x_data, y_data, debug=False, threshold_multiplier=2):
+def find_onset(aligned_x, aligned_y, debug=False, threshold_multiplier=2, window_size=5):
     """
     Detect the onset point where y_data starts to decrease significantly.
 
     Parameters:
-    - x_data (Series or array-like): The X-axis data (e.g., temperature).
-    - y_data (Series or array-like): The Y-axis data (e.g., Eprime values).
+    - aligned_x (Series or array-like): The aligned X-axis data (e.g., temperature).
+    - aligned_y (Series or array-like): The aligned Y-axis data (e.g., Eprime values).
     - debug (bool): Enable debug logging.
     - threshold_multiplier (float): Multiplier for standard deviation in threshold calculation.
+    - window_size (int): Window size for moving average smoothing.
 
     Returns:
     - float: The X-value corresponding to the onset, or None if not found.
     """
     try:
-        # Combine x and y into a DataFrame and drop NaN values
-        data = pd.DataFrame({'x': x_data, 'y': y_data}).dropna().reset_index(drop=True)
-        x = data['x']
-        y = data['y']
-
-        # Calculate the first derivative
-        dy_dx = y.diff() / x.diff()
+        # Apply moving average to smooth the data
+        y_smooth = aligned_y.rolling(window=window_size, center=True, min_periods=1).mean()
 
         if debug:
-            print(f"First Derivative:\n{dy_dx}")
+            print(f"Find Onset: Smoothed Y-data:\n{y_smooth}")
+
+        # Calculate the first derivative
+        dy_dx = y_smooth.diff() / aligned_x.diff()
+
+        if debug:
+            print(f"Find Onset: First Derivative:\n{dy_dx}")
 
         # Define a negative threshold to detect significant decrease
         threshold_negative = dy_dx.mean() - threshold_multiplier * dy_dx.std()
 
         if debug:
-            print(f"Onset Threshold (Negative): {threshold_negative}")
+            print(f"Find Onset: Threshold Negative: {threshold_negative}")
 
         # Detect where the derivative falls below the threshold
         onset_indices = dy_dx[dy_dx < threshold_negative].index
 
         if not onset_indices.empty:
             onset_index = onset_indices[0]
-            onset_x = x.iloc[onset_index]
+            onset_x = aligned_x.iloc[onset_index]
             if debug:
                 print(f"Find Onset: Detected onset at index {onset_index}, X = {onset_x}")
             return onset_x
@@ -97,42 +106,79 @@ def find_onset(x_data, y_data, debug=False, threshold_multiplier=2):
             print(f"Find Onset: Error during onset detection: {e}")
         return None
 
-def find_peak(x_data, y_data, debug=False):
+
+def find_tip_with_scipy(aligned_x, aligned_y, debug=False, height=None, distance=50, prominence=0.001):
     """
-    Detect the peak in the data (maximum Y value) and return the corresponding X value.
+    Detect the first tip of the data using SciPy's find_peaks function.
 
     Parameters:
-    - x_data (Series): The X-axis data (e.g., temperature).
-    - y_data (Series): The Y-axis data (e.g., E'' or tan δ).
+    - aligned_x (Series or array-like): The aligned X-axis data.
+    - aligned_y (Series or array-like): The aligned Y-axis data.
+    - debug (bool): Enable debug logging.
+    - height (float or None): Minimum height of peaks.
+    - distance (int): Minimum number of samples between peaks.
+    - prominence (float): Minimum prominence of peaks.
+
+    Returns:
+    - (float, float): The X and Y value at the tip, or (None, None) if no tip is found.
+    """
+    try:
+        # Find peaks using SciPy
+        peaks, properties = find_peaks(aligned_y, height=height, distance=distance, prominence=prominence)
+
+        if debug:
+            print(f"Find Tip with SciPy: Detected peaks at indices {peaks}")
+            print(f"Find Tip with SciPy: Peak properties {properties}")
+
+        if len(peaks) == 0:
+            if debug:
+                print("Find Tip with SciPy: No peaks detected.")
+            return None, None
+
+        # Select the first peak
+        first_peak = peaks[0]
+        tip_x = aligned_x.iloc[first_peak]
+        tip_y = aligned_y.iloc[first_peak]
+
+        if debug:
+            print(f"Find Tip with SciPy: Tip detected at index {first_peak}, X = {tip_x}, Y = {tip_y}")
+
+        return tip_x, tip_y
+
+    except Exception as e:
+        if debug:
+            print(f"Find Tip with SciPy: Error during tip detection: {e}")
+        return None, None
+
+
+def get_aligned_data(data, x_column, y_column, debug=False):
+    """
+    Align X and Y data by dropping rows where Y is NaN and resetting indices.
+
+    Parameters:
+    - data (DataFrame): The DataFrame containing X and Y columns.
+    - x_column (str): The name of the X-axis column.
+    - y_column (str): The name of the Y-axis column.
     - debug (bool): Enable debug logging.
 
     Returns:
-    - (float, float): The X value at the peak and the peak Y value, or (None, None) if no peak is found.
+    - (Series, Series): Aligned and indexed X and Y data.
     """
-    try:
-        # Ensure valid data
-        if y_data.empty or x_data.empty:
-            if debug:
-                print("Find Peak: X or Y data is empty.")
-            return None, None
+    aligned_data = data[[x_column, y_column]].dropna().reset_index(drop=True)
+    aligned_x = pd.to_numeric(aligned_data[x_column], errors='coerce')
+    aligned_y = pd.to_numeric(aligned_data[y_column], errors='coerce')
 
-        # Find the peak (maximum Y value)
-        peak_idx = y_data.idxmax()
-        peak_x = x_data.iloc[peak_idx]
-        peak_y = y_data.iloc[peak_idx]
+    if debug:
+        print(f"Aligned X-axis data for '{y_column}':\n{aligned_x}")
+        print(f"Aligned Y-axis data for '{y_column}':\n{aligned_y}")
 
-        if debug:
-            print(f"Find Peak: Peak detected at X = {peak_x}, Y = {peak_y}")
-        return peak_x, peak_y
-    except Exception as e:
-        if debug:
-            print(f"Find Peak: Error during peak detection: {e}")
-        return None, None
+    return aligned_x, aligned_y
+
 
 def analyze_temperature_sweep(data, debug=False):
     """
     Analyze data specific to 'Temperature Sweep' ASSAY.
-    Perform onset analysis for E' and peak analysis for E'' and tan δ.
+    Perform onset analysis for E' and peak detection for E'' and tan δ.
 
     Parameters:
     - data (DataFrame): The loaded CSV data.
@@ -148,10 +194,6 @@ def analyze_temperature_sweep(data, debug=False):
 
     # Identify the X-axis column (first column)
     x_column = data.columns[0]
-    x_data = pd.to_numeric(data[x_column], errors='coerce').dropna()
-    if debug:
-        print(f"Analyze Temperature Sweep: Identified X-axis column: '{x_column}'")
-        print(f"Analyze Temperature Sweep: X-axis data:\n{x_data.head()}")
 
     # Track completed analyses
     if "Metadata Property" in data.columns:
@@ -159,7 +201,7 @@ def analyze_temperature_sweep(data, debug=False):
         if not completed_analyses.empty:
             completed_analyses_list = completed_analyses.iloc[0, 1]
             if isinstance(completed_analyses_list, str):
-                completed_analyses_list = completed_analyses_list.split(", ")
+                completed_analyses_list = [item.strip() for item in completed_analyses_list.split(",")]
             else:
                 completed_analyses_list = []
         else:
@@ -169,53 +211,71 @@ def analyze_temperature_sweep(data, debug=False):
 
     # Analyze onset for E' columns
     if debug:
-        print (f"Cleaned columns {cleaned_columns}")
+        print(f"Cleaned columns {cleaned_columns}")
     eprime_columns = [col for col in cleaned_columns if re.search(r"\bE'(?!')", col)]
 
     if debug:
-        print (f"found Eprime columns {eprime_columns}")
+        print(f"Found Eprime columns {eprime_columns}")
     for eprime_column in eprime_columns:
-        analysis_name = f"Onset of Eprime"
+        analysis_name = "Onset of Eprime"
         if analysis_name in completed_analyses_list:
-            print(f"Analyze Temperature Sweep: Skipping already completed analysis Eprime.")
+            if debug:
+                print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
             continue
 
-        y_data = pd.to_numeric(data[eprime_column], errors='coerce').dropna()
-        if debug:
-            print(f"Analyze Temperature Sweep: Analyzing onset for Eprime")
-            print(f"X-axis data:\n{x_data}")
-            print(f"Y-axis data:\n{y_data}")
+        # Align X and Y data
+        aligned_x, aligned_y = get_aligned_data(data, x_column, eprime_column, debug=debug)
+
+        if aligned_y.empty:
+            if debug:
+                print(f"Analyze Temperature Sweep: Aligned Y-data for '{eprime_column}' is empty. Skipping onset analysis.")
+            continue
 
         # Perform onset analysis
-        onset_x = find_onset(x_data, y_data, debug=debug)
+        onset_x = find_onset(aligned_x, aligned_y, debug=debug)
 
         if onset_x is not None:
             print(f"Analyze Temperature Sweep: Onset detected for Eprime at X = {onset_x}")
             data = save_results(
                 data=data,
                 metadata_property_column="Metadata Property",
-                analysis_name="Onset of Eprime",
+                analysis_name=analysis_name,
                 analysis_value=onset_x,
                 debug=debug
             )
             completed_analyses_list.append(analysis_name)
 
-    # Analyze peaks for E'' (Edoubleprime)if debug:
+    # Analyze peaks for E'' (Edoubleprime)
     matching_columns_edoubleprime = [
         col for col in cleaned_columns if re.search(r"E''|E\"", col, re.IGNORECASE)
     ]
 
     if debug:
-        print (f"Found Edoubleprime columns {matching_columns_edoubleprime}")
+        print(f"Found Edoubleprime columns {matching_columns_edoubleprime}")
     for column in matching_columns_edoubleprime:
-        analysis_name = f"Peak of Edoubleprime"
+        analysis_name = "Peak of Edoubleprime"
         if analysis_name in completed_analyses_list:
-            print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
+            if debug:
+                print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
             continue
 
-        # Perform peak analysis for E''
-        y_data = pd.to_numeric(data[column], errors='coerce').dropna()
-        peak_x, peak_y = find_peak(x_data, y_data, debug=debug)
+        # Align X and Y data
+        aligned_x, aligned_y = get_aligned_data(data, x_column, column, debug=debug)
+
+        if aligned_y.empty:
+            if debug:
+                print(f"Analyze Temperature Sweep: Aligned Y-data for '{column}' is empty. Skipping peak analysis.")
+            continue
+
+        # Perform peak detection using SciPy
+        peak_x, peak_y = find_tip_with_scipy(
+            aligned_x,
+            aligned_y,
+            debug=debug,
+            height=0.01,      # Adjust based on your data
+            distance=5,      # Minimum number of samples between peaks
+            prominence=10  # Minimum prominence of peaks
+        )
 
         if peak_x is not None and peak_y is not None:
             print(f"Analyze Temperature Sweep: Peak detected for Edoubleprime at X = {peak_x}, Y = {peak_y}")
@@ -228,17 +288,32 @@ def analyze_temperature_sweep(data, debug=False):
             )
             completed_analyses_list.append(analysis_name)
 
-    # Analyze peaks for tan δ (Tand)
+    # Analyze peaks for tan δ (tand)
     matching_columns_tand = [col for col in cleaned_columns if re.search(r"tan ?δ|tan d", col, re.IGNORECASE)]
     for column in matching_columns_tand:
-        analysis_name = f"Peak of tand"
+        analysis_name = "Peak of tand"
         if analysis_name in completed_analyses_list:
-            print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
+            if debug:
+                print(f"Analyze Temperature Sweep: Skipping already completed analysis '{analysis_name}'.")
             continue
 
-        # Perform peak analysis for tan δ
-        y_data = pd.to_numeric(data[column], errors='coerce').dropna()
-        peak_x, peak_y = find_peak(x_data, y_data, debug=debug)
+        # Align X and Y data
+        aligned_x, aligned_y = get_aligned_data(data, x_column, column, debug=debug)
+
+        if aligned_y.empty:
+            if debug:
+                print(f"Analyze Temperature Sweep: Aligned Y-data for '{column}' is empty. Skipping peak analysis.")
+            continue
+
+        # Perform peak detection using SciPy
+        peak_x, peak_y = find_tip_with_scipy(
+            aligned_x,
+            aligned_y,
+            debug=debug,
+            height=0.01,      # Adjust based on your data
+            distance=5,      # Minimum number of samples between peaks
+            prominence=0.5  # Minimum prominence of peaks
+        )
 
         if peak_x is not None and peak_y is not None:
             print(f"Analyze Temperature Sweep: Peak detected for tand at X = {peak_x}, Y = {peak_y}")
@@ -250,7 +325,6 @@ def analyze_temperature_sweep(data, debug=False):
                 debug=debug
             )
             completed_analyses_list.append(analysis_name)
-
 
     # Update the "Completed Analyses" metadata
     if "Completed Analyses" in data["Metadata Property"].values:
@@ -268,7 +342,7 @@ def analyze_temperature_sweep(data, debug=False):
     return data
 
 
-def analyze(csv_path, debug=True):
+def analyze(csv_path, debug=False):
     """
     Analysis function that extracts and outputs the value of 'ASSAY' from metadata.
     If the ASSAY is 'Temperature Sweep', passes the data to analyze_temperature_sweep.
@@ -315,6 +389,7 @@ def analyze(csv_path, debug=True):
     except Exception as e:
         print(f"Analyzer Error: An unexpected error occurred - {e}")
 
+
 def main():
     """
     Analyzer that passes the analyzed CSV file to plotter.py for plotting.
@@ -328,7 +403,7 @@ def main():
     debug=True
     # Perform analysis and get the path to the analyzed CSV
     analyzed_csv = csv_file.replace(".csv", "_analyzed.csv")
-    analyze(csv_file)  # Call the analyze function, which saves the analyzed CSV
+    analyze(csv_file, debug=debug)  # Pass debug flag
 
     try:
         # Call plotter.py as a standalone script with the analyzed CSV file
@@ -348,6 +423,7 @@ def main():
         print(f"Plotter Error Output:\n{e.stderr}")
     except Exception as ex:
         print(f"Analyzer: Unexpected error while calling plotter.py: {ex}")
+
 
 if __name__ == "__main__":
     main()
