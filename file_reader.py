@@ -14,17 +14,27 @@ def read_file(file_path, assay, debug=False):
         if debug:
             print(f"Reading file '{file_path}' with UTF-8 encoding.")
         
-        # Determine if the file is multi-format by checking the number of metadata entries
-        metadata_lines = [line for line in lines if line.startswith('#') and not line.startswith('##')]
-        if len(metadata_lines) > 1:
-            if debug:
-                print(f"File '{file_path}' detected as multi format.")
-            return extract_multi(lines, file_path, assay, debug=debug)
+        # Determine if the file is multi-format by checking the #FILE: metadata line
+        file_metadata_lines = [line for line in lines if line.startswith('#FILE:')]
+
+        if file_metadata_lines:
+            # Split the first #FILE: line to count the number of entries
+            file_values = file_metadata_lines[0].split('\t')[1:]  # Skip the '#FILE:' key
+            file_values = [value.strip() for value in file_values if value.strip()]  # Clean empty values
+
+            if len(file_values) > 1:
+                if debug:
+                    print(f"File '{file_path}' detected as multi format with FILE entries: {file_values}")
+                return extract_multi(lines, file_path, assay, debug=debug)
+            else:
+                if debug:
+                    print(f"File '{file_path}' detected as single format with one FILE entry.")
+                return extract_single(lines, file_path, assay, debug=debug)
         else:
             if debug:
-                print(f"File '{file_path}' detected as single format.")
+                print(f"No #FILE: metadata found. Defaulting to single format.")
             return extract_single(lines, file_path, assay, debug=debug)
-    
+            
     except Exception as e:
         if debug:
             print(f"An error occurred while processing the file '{file_path}': {e}")
@@ -77,15 +87,16 @@ def sanitize_column_name(col_name):
 
 def extract_single(lines, file_path, assay, debug=False):
     """
-    Extract data from single format files.
+    Extract data from single format files and structure it like multi-format files.
     """
     metadata = {}
     column_headers = None
     data_lines = []
-    
+
+    # Parse lines for metadata, column headers, and data
     for line in lines:
         line = line.strip()
-        
+
         # Metadata lines
         if line.startswith('#') and not line.startswith('##'):
             parts = line[1:].split('\t', 1)
@@ -93,41 +104,57 @@ def extract_single(lines, file_path, assay, debug=False):
                 key, value = parts
                 metadata[key.strip()] = value.strip()
             continue
-        
+
         # Column headers
         if line.startswith('##'):
             column_headers = line[2:].split('\t')
             continue
-        
+
         # Data lines
         if line and not line.startswith('#'):
             data = line.split('\t')
             data_lines.append(data)
-    
+
     # Add ASSAY to metadata
     metadata['ASSAY'] = assay
-    
-    # Extract FILE property from metadata
+
+    # Extract FILE property from metadata or default to file name
     file_property = metadata.get('FILE', Path(file_path).stem)
     metadata['FILE'] = file_property
-    
+
     # Determine the common header
-    if column_headers:
-        common_header = extract_common_header(column_headers, debug=debug)
-    else:
-        common_header = None
-    
-    # Create DataFrame
+    common_header = extract_common_header(column_headers, debug=debug) if column_headers else None
+
+    # Build the data DataFrame
     if column_headers and data_lines:
         data_df = pd.DataFrame(data_lines, columns=column_headers)
         
         # Sanitize column names
         data_df.columns = [sanitize_column_name(col) for col in data_df.columns]
         
+        # Add a placeholder for the common header if needed
+        if common_header and common_header not in data_df.columns:
+            data_df[common_header] = pd.NA
+        
+        # Structure the output like multi-format
         experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', 'Unknown_File')}"
-        return metadata, {experiment_name: data_df}
-    else:
-        return metadata, None
+        structured_output = {
+            experiment_name: {
+                'metadata': metadata,
+                'data': data_df
+            }
+        }
+        
+        if debug:
+            print("Extracted single experiment structure:")
+            pprint(structured_output)
+        
+        return metadata, structured_output
+
+    # Handle case where data extraction failed
+    if debug:
+        print("No valid data or headers found in the single-format file.")
+    return metadata, {}
 
 def extract_multi(lines, file_path, assay, debug=False):
     """

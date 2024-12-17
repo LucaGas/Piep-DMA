@@ -6,30 +6,34 @@ import re
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(message)s')
+logging.basicConfig(level=logging.WARN, format='%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
 
 def sanitize_column_name(column_name):
     """
-    Sanitize column names by replacing problematic characters.
-    
-    Parameters:
-    - column_name (str): Original column name.
-    
-    Returns:
-    - str: Sanitized column name.
-    """
-    if not isinstance(column_name, str):
-        return column_name
+    Sanitize column names by replacing problematic characters and specific patterns.
 
-    sanitized_name = (
-        column_name
-        .replace("�", "°")  # Handle encoding errors
-        .strip()
-    )
+    Parameters:
+        column_name (str): The original column name.
+
+    Returns:
+        str: The sanitized column name.
+    """
+    replacements = {
+        r'E"\(': r"E'' (",          # Replace E"( with E'' (
+        "�": "°"                    # Handle encoding errors
+    }
+
+    # Replace specific patterns
+    for original, replacement in replacements.items():
+        column_name = re.sub(original, replacement, column_name)
+
+    # Strip leading/trailing spaces
+    sanitized_name = column_name.strip()
+    
     return sanitized_name
 
-def sanitize_dataframe(df, debug=False):
+def sanitize_dataframe(df, debug=True):
     """
     Clean the DataFrame by handling NaN values and ensuring columns are usable.
 
@@ -104,20 +108,21 @@ def map_column_name(y_column):
     """
     # Define your mappings here
     replacements = {
-        "E''": "Edoubleprime",
-        "E'": "Eprime",
-        "tan d": "tan_delta",
-        "tanδ": "tan_delta",
+        "E''": "Edoubleprime",  # Matches E'' (two single quotes)
+        "E\"": "Edoubleprime",  # Matches E" (single double quote)
+        "E'": "Eprime",         # Matches E' (single single quote)
+        "tan d": "tan_delta",   # Matches tan d
+        "tanδ": "tan_delta",    # Matches tanδ
         # Add more mappings as needed
     }
-    
+        
     for original, replacement in replacements.items():
         # Use case-insensitive replacement
         y_column = re.sub(re.escape(original), replacement, y_column, flags=re.IGNORECASE)
     
     return y_column
 
-def plot_temperature_sweep(csv_file, debug=False):
+def plot_temperature_sweep(csv_file, debug=True):
     """
     Plot data from a CSV file where Y-axis values are plotted against the primary X-axis column ('Temp' or 'Time').
     Highlights relevant analysis results (onsets and peaks) as markers.
@@ -129,12 +134,12 @@ def plot_temperature_sweep(csv_file, debug=False):
     try:
         # Load the CSV file
         df = pd.read_csv(csv_file)
-        logger.info(f"Loaded CSV file: {csv_file}")
+        print(f"Loaded CSV file: {csv_file}")
 
         # Sanitize column names
         df.columns = [sanitize_column_name(col) for col in df.columns]
         if debug:
-            logger.info(f"Plotter: Sanitized data columns: {list(df.columns)}")
+            print(f"Plotter: Sanitized data columns: {list(df.columns)}")
 
         # Sanitize the DataFrame
         df = sanitize_dataframe(df, debug=debug)
@@ -190,6 +195,7 @@ def plot_temperature_sweep(csv_file, debug=False):
             "Eprime (1.000 Hz) MPa": ["Onset of Eprime"],
             "Edoubleprime (1.000 Hz) MPa": ["Peak of Edoubleprime"],
             "tan_delta(1.000 Hz)": ["Peak of tand"],
+            "Edoubleprime (1.000 Hz)/MPa": ["Peak of Edoubleprime"],
             # Add any additional mappings if necessary
         }
 
@@ -197,7 +203,7 @@ def plot_temperature_sweep(csv_file, debug=False):
         # Iterate over Y-axis columns and plot against the X-axis column
         for y_column in y_columns:
             if debug:
-                logger.info(f"Plotter: Preparing to plot '{y_column}' against '{x_column}'")
+                print(f"Plotter: Preparing to plot '{y_column}' against '{x_column}'")
 
             # Ensure valid numeric data
             x_data = pd.to_numeric(df[x_column], errors='coerce')
@@ -209,7 +215,7 @@ def plot_temperature_sweep(csv_file, debug=False):
             # Debug valid data
             if valid_data.empty:
                 if debug:
-                    logger.debug(f"Plotter: No valid data for '{x_column}' and '{y_column}'. Skipping.")
+                    print(f"Plotter: No valid data for '{x_column}' and '{y_column}'. Skipping.")
                 continue
 
             # Plot the data
@@ -226,12 +232,13 @@ def plot_temperature_sweep(csv_file, debug=False):
 
             # Sanitize the mapped y_column for logging or other purposes (if needed)
             sanitized_y_column_log = re.sub(r'[^\w\-_. ]', '_', mapped_y_column)
-
+            if debug:
+                print(f"sanitized_y_column_log: {sanitized_y_column_log}")
             # Get relevant analysis keys for the current y_column
             relevant_analysis_keys = column_to_analysis_keys.get(mapped_y_column, [])
 
             if debug:
-                logger.debug(f"Relevant analysis keys for '{mapped_y_column}': {relevant_analysis_keys}")
+                print(f"Relevant analysis keys for '{mapped_y_column}': {relevant_analysis_keys}")
 
             # To avoid duplicate legends, use a set to track added labels
             added_legends = set()
@@ -242,7 +249,7 @@ def plot_temperature_sweep(csv_file, debug=False):
                     analysis_value = str(analysis_results[analysis_key]).strip()
 
                     if not analysis_value or analysis_value.lower() == "nan":
-                        logger.warning(f"Skipping invalid metadata value for '{analysis_key}': {analysis_value}")
+                        print(f"Skipping invalid metadata value for '{analysis_key}': {analysis_value}")
                         continue
 
                     if debug:

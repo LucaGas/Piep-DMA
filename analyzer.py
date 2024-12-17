@@ -200,8 +200,13 @@ def analyze_temperature_sweep(data, debug=False):
             )
             completed_analyses_list.append(analysis_name)
 
-    # Analyze peaks for E'' (Edoubleprime)
-    matching_columns_edoubleprime = [col for col in cleaned_columns if re.search(r"E''", col, re.IGNORECASE)]
+    # Analyze peaks for E'' (Edoubleprime)if debug:
+    matching_columns_edoubleprime = [
+        col for col in cleaned_columns if re.search(r"E''|E\"", col, re.IGNORECASE)
+    ]
+
+    if debug:
+        print (f"Found Edoubleprime columns {matching_columns_edoubleprime}")
     for column in matching_columns_edoubleprime:
         analysis_name = f"Peak of Edoubleprime"
         if analysis_name in completed_analyses_list:
