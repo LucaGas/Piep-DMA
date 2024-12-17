@@ -168,7 +168,11 @@ def analyze_temperature_sweep(data, debug=False):
         completed_analyses_list = []
 
     # Analyze onset for E' columns
-    eprime_columns = [col for col in cleaned_columns if re.search(r"E'", col)]
+    if debug:
+        print (f"Cleaned columns {cleaned_columns}")
+    eprime_columns = [col for col in cleaned_columns if re.search(r"\bE'\b", col)]
+    if debug:
+        print (f"found Eprime columns {eprime_columns}")
     for eprime_column in eprime_columns:
         analysis_name = f"Onset of Eprime"
         if analysis_name in completed_analyses_list:
