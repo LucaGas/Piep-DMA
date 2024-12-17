@@ -4,6 +4,7 @@ import sys
 import pandas as pd
 import subprocess
 from pathlib import Path
+from pprint import pprint
 import re
 
 def save_results(data, metadata_property_column, analysis_name, analysis_value, debug=False):
@@ -47,39 +48,55 @@ def save_results(data, metadata_property_column, analysis_name, analysis_value, 
         return data
 
 
-def find_onset(x_data, y_data, debug=False):
+def find_onset(x_data, y_data, debug=False, threshold_multiplier=2):
     """
-    Detect the onset point in the data.
+    Detect the onset point where y_data starts to decrease significantly.
 
     Parameters:
-    - x_data (Series): The X-axis data (e.g., temperature).
-    - y_data (Series): The Y-axis data (e.g., Eprime values).
+    - x_data (Series or array-like): The X-axis data (e.g., temperature).
+    - y_data (Series or array-like): The Y-axis data (e.g., Eprime values).
     - debug (bool): Enable debug logging.
+    - threshold_multiplier (float): Multiplier for standard deviation in threshold calculation.
 
     Returns:
     - float: The X-value corresponding to the onset, or None if not found.
     """
     try:
-        # Calculate the first derivative of the Y-axis data
-        dy_dx = y_data.diff() / x_data.diff()
+        # Combine x and y into a DataFrame and drop NaN values
+        data = pd.DataFrame({'x': x_data, 'y': y_data}).dropna().reset_index(drop=True)
+        x = data['x']
+        y = data['y']
 
-        # Detect where the derivative exceeds a threshold (onset criterion)
-        threshold = dy_dx.mean() + 2 * dy_dx.std()  # Example criterion
-        onset_index = dy_dx[dy_dx > threshold].first_valid_index()
+        # Calculate the first derivative
+        dy_dx = y.diff() / x.diff()
 
-        if onset_index is not None:
-            onset_x = x_data.iloc[onset_index]
+        if debug:
+            print(f"First Derivative:\n{dy_dx}")
+
+        # Define a negative threshold to detect significant decrease
+        threshold_negative = dy_dx.mean() - threshold_multiplier * dy_dx.std()
+
+        if debug:
+            print(f"Onset Threshold (Negative): {threshold_negative}")
+
+        # Detect where the derivative falls below the threshold
+        onset_indices = dy_dx[dy_dx < threshold_negative].index
+
+        if not onset_indices.empty:
+            onset_index = onset_indices[0]
+            onset_x = x.iloc[onset_index]
             if debug:
                 print(f"Find Onset: Detected onset at index {onset_index}, X = {onset_x}")
             return onset_x
         else:
             if debug:
-                print("Find Onset: No significant change detected.")
+                print("Find Onset: No significant decrease detected.")
             return None
     except Exception as e:
         if debug:
             print(f"Find Onset: Error during onset detection: {e}")
         return None
+
 def find_peak(x_data, y_data, debug=False):
     """
     Detect the peak in the data (maximum Y value) and return the corresponding X value.
@@ -161,7 +178,8 @@ def analyze_temperature_sweep(data, debug=False):
         y_data = pd.to_numeric(data[eprime_column], errors='coerce').dropna()
         if debug:
             print(f"Analyze Temperature Sweep: Analyzing onset for Eprime")
-            print(f"Y-axis data:\n{y_data.head()}")
+            print(f"X-axis data:\n{x_data}")
+            print(f"Y-axis data:\n{y_data}")
 
         # Perform onset analysis
         onset_x = find_onset(x_data, y_data, debug=debug)
@@ -240,7 +258,7 @@ def analyze_temperature_sweep(data, debug=False):
     return data
 
 
-def analyze(csv_path, debug=False):
+def analyze(csv_path, debug=True):
     """
     Analysis function that extracts and outputs the value of 'ASSAY' from metadata.
     If the ASSAY is 'Temperature Sweep', passes the data to analyze_temperature_sweep.
@@ -297,7 +315,7 @@ def main():
 
     csv_file = sys.argv[1]
     print(f"Analyzer: Received '{csv_file}' for analysis.")
-
+    debug=True
     # Perform analysis and get the path to the analyzed CSV
     analyzed_csv = csv_file.replace(".csv", "_analyzed.csv")
     analyze(csv_file)  # Call the analyze function, which saves the analyzed CSV

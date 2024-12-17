@@ -6,7 +6,7 @@ import re
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s:%(message)s')
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
 
 def sanitize_column_name(column_name):
