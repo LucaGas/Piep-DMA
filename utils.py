@@ -1,13 +1,13 @@
 # utils.py
-
-import pandas as pd
-import re
 import logging
 from logging.handlers import RotatingFileHandler
+import sys
+import re
+import pandas as pd
 
 def setup_logging(log_level=logging.WARNING, log_file='app.log', max_bytes=5*1024*1024, backup_count=5):
     """
-    Set up logging configuration for the entire application with log rotation.
+    Set up logging configuration for the entire application with log rotation and UTF-8 encoding.
 
     Parameters:
         log_level (int): Logging level (e.g., logging.DEBUG, logging.INFO).
@@ -20,22 +20,30 @@ def setup_logging(log_level=logging.WARNING, log_file='app.log', max_bytes=5*102
 
     # Check if handlers are already added to avoid duplicate logs
     if not logger.handlers:
-        # Create console handler
-        c_handler = logging.StreamHandler()
-        c_handler.setLevel(log_level)
+        # Create console handler with UTF-8 encoding
+        try:
+            c_handler = logging.StreamHandler(sys.stdout)
+            c_handler.setLevel(log_level)
+            c_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            c_handler.setStream(sys.stdout)
+            c_handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+            logger.addHandler(c_handler)
+        except Exception as e:
+            # Fallback if the above method fails
+            c_handler = logging.StreamHandler(sys.stdout)
+            c_handler.setLevel(log_level)
+            c_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logger.addHandler(c_handler)
+            logger.error(f"Failed to set UTF-8 encoding for console handler: {e}")
 
-        # Create rotating file handler
-        f_handler = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count)
-        f_handler.setLevel(log_level)
-
-        # Create formatter and add it to handlers
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        c_handler.setFormatter(formatter)
-        f_handler.setFormatter(formatter)
-
-        # Add handlers to the logger
-        logger.addHandler(c_handler)
-        logger.addHandler(f_handler)
+        # Create rotating file handler with UTF-8 encoding
+        try:
+            f_handler = RotatingFileHandler(log_file, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8')
+            f_handler.setLevel(log_level)
+            f_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            logger.addHandler(f_handler)
+        except Exception as e:
+            logger.error(f"Failed to set UTF-8 encoding for file handler: {e}")
 
 
 def save_results(data, metadata_property_column, analysis_name, analysis_value):
