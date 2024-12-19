@@ -13,7 +13,7 @@
 #OPERATOR:    	LG                                            
 #REMARK:      	                                              
 #SAMPLEHOLDER:	SingleCantilever16                            
-#SAMPLE:      	Resin                                         
+#SAMPLE:      	TESTSAMPLE                                         
 #SAMPLEDIM/MM:	16.000x10.720x3.700                           
 #MATERIAL:    	                                              
 #CORR. CODE:  	0                                             
