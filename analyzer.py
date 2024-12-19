@@ -51,6 +51,7 @@ def analyze(csv_path, debug=False):
         # Define assay script mapping
         assay_scripts = {
             "Temperature Sweep": "analyze_temperature_sweep.py",
+            "Frequency Sweep": "frequency_sweep.py",
             # Add mappings for additional assays here
             # "Other Assay": "analyze_other_assay.py",
         }

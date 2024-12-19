@@ -107,6 +107,10 @@ def extract_single(lines, file_path, assay):
     metadata = {}
     structured_output = {}
     
+    # Add ASSAY to metadata early
+    metadata['ASSAY'] = assay
+    logger.debug(f"Added 'ASSAY' to metadata: {assay}")
+
     current_header = None
     current_data_lines = []
     experiment_count = 0
@@ -130,7 +134,8 @@ def extract_single(lines, file_path, assay):
             # If there's an existing header and data, process it
             if current_header and current_data_lines:
                 experiment_count += 1
-                experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
+                # New naming convention: Use FILE and experiment count
+                experiment_name = f"{metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
                 data_df = pd.DataFrame(current_data_lines, columns=current_header)
                 
                 logger.debug(f"Created DataFrame for experiment '{experiment_name}' with {len(data_df)} rows.")
@@ -173,7 +178,7 @@ def extract_single(lines, file_path, assay):
     # After processing all lines, handle the last block if exists
     if current_header and current_data_lines:
         experiment_count += 1
-        experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
+        experiment_name = f"{metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
         data_df = pd.DataFrame(current_data_lines, columns=current_header)
         
         logger.debug(f"Created DataFrame for experiment '{experiment_name}' with {len(data_df)} rows.")
@@ -198,10 +203,6 @@ def extract_single(lines, file_path, assay):
         logger.info(f"Extracted single experiment structure for '{experiment_name}'.")
         logger.debug("Structured Output:")
         pprint(structured_output[experiment_name])
-
-    # Add ASSAY to metadata
-    metadata['ASSAY'] = assay
-    logger.debug(f"Added 'ASSAY' to metadata: {assay}")
 
     # Extract FILE property from metadata or default to file name
     file_property = metadata.get('FILE', Path(file_path).stem)
