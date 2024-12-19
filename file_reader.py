@@ -1,12 +1,13 @@
-# read_file.py
+# file_reader.py
 
+import pandas as pd  # Import pandas
 import numpy as np
-import pandas as pd
 from pathlib import Path
 import logging
-import re
 from pprint import pprint
+import re
 from utils import setup_logging, sanitize_column_name  # Import necessary utilities
+
 
 def read_file(file_path, assay):
     """
@@ -49,13 +50,13 @@ def read_file(file_path, assay):
             return extract_single(lines, file_path, assay)
 
     except FileNotFoundError:
-        logger.error(f"Read File: The file '{file_path}' does not exist.")
+        logger.error(f"File Reader: The file '{file_path}' does not exist.")
         return None, None
     except pd.errors.EmptyDataError:
-        logger.error(f"Read File: The file '{file_path}' is empty.")
+        logger.error(f"File Reader: The file '{file_path}' is empty.")
         return None, None
     except Exception as e:
-        logger.error(f"Read File: An error occurred while processing '{file_path}': {e}")
+        logger.error(f"File Reader: An error occurred while processing '{file_path}': {e}")
         return None, None
 
 
@@ -75,12 +76,12 @@ def extract_common_header(headers):
     if temp_headers:
         logger.debug(f"Identified common header based on 'Temp': {temp_headers[0]}")
         return temp_headers[0]
-    
+
     time_headers = [h for h in headers if 'time' in h.lower()]
     if time_headers:
         logger.debug(f"Identified common header based on 'Time': {time_headers[0]}")
         return time_headers[0]
-    
+
     if headers:
         logger.debug(f"No 'Temp' or 'Time' found. Defaulting to first header: {headers[0]}")
         return headers[0]
@@ -91,7 +92,8 @@ def extract_common_header(headers):
 
 def extract_single(lines, file_path, assay):
     """
-    Extract data from single format files and structure it like multi-format files.
+    Extract data from single format files and structure it like multi-format files,
+    handling multiple header lines within the same file.
 
     Parameters:
         lines (list): List of lines from the file.
@@ -103,13 +105,15 @@ def extract_single(lines, file_path, assay):
     """
     logger = logging.getLogger(__name__)
     metadata = {}
-    column_headers = None
-    data_lines = []
+    structured_output = {}
+    
+    current_header = None
+    current_data_lines = []
+    experiment_count = 0
 
     logger.info(f"Extracting single-format data from '{file_path}'.")
 
-    # Parse lines for metadata, column headers, and data
-    for line in lines:
+    for line_number, line in enumerate(lines, 1):
         line = line.strip()
 
         # Metadata lines
@@ -121,17 +125,79 @@ def extract_single(lines, file_path, assay):
                 logger.debug(f"Extracted metadata: {key.strip()} = {value.strip()}")
             continue
 
-        # Column headers
+        # Header lines
         if line.startswith('##'):
-            column_headers = line[2:].split('\t')
-            logger.debug(f"Extracted column headers: {column_headers}")
+            # If there's an existing header and data, process it
+            if current_header and current_data_lines:
+                experiment_count += 1
+                experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
+                data_df = pd.DataFrame(current_data_lines, columns=current_header)
+                
+                logger.debug(f"Created DataFrame for experiment '{experiment_name}' with {len(data_df)} rows.")
+
+                # Sanitize column names
+                original_columns = data_df.columns.tolist()
+                data_df.columns = [sanitize_column_name(col) for col in data_df.columns]
+                logger.debug(f"Sanitized column names: {data_df.columns.tolist()}")
+
+                # Add a placeholder for the common header if needed
+                common_header = extract_common_header(current_header)
+                if common_header and common_header not in data_df.columns:
+                    data_df[common_header] = pd.NA
+                    logger.debug(f"Added placeholder for common header '{common_header}'.")
+
+                # Structure the output
+                structured_output[experiment_name] = {
+                    'metadata': metadata.copy(),  # Use a copy to prevent overwriting
+                    'data': data_df
+                }
+
+                logger.info(f"Extracted single experiment structure for '{experiment_name}'.")
+                logger.debug("Structured Output:")
+                pprint(structured_output[experiment_name])
+
+                # Reset for the next experiment
+                current_data_lines = []
+            
+            # Update the current header
+            current_header = line[2:].split('\t')
+            logger.debug(f"Extracted column headers: {current_header}")
             continue
 
         # Data lines
         if line and not line.startswith('#'):
             data = line.split('\t')
-            data_lines.append(data)
-            logger.debug(f"Added data line: {data}")
+            current_data_lines.append(data)
+            logger.debug(f"Added data line (Line {line_number}): {data}")
+
+    # After processing all lines, handle the last block if exists
+    if current_header and current_data_lines:
+        experiment_count += 1
+        experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', Path(file_path).stem)}_{experiment_count}"
+        data_df = pd.DataFrame(current_data_lines, columns=current_header)
+        
+        logger.debug(f"Created DataFrame for experiment '{experiment_name}' with {len(data_df)} rows.")
+
+        # Sanitize column names
+        original_columns = data_df.columns.tolist()
+        data_df.columns = [sanitize_column_name(col) for col in data_df.columns]
+        logger.debug(f"Sanitized column names: {data_df.columns.tolist()}")
+
+        # Add a placeholder for the common header if needed
+        common_header = extract_common_header(current_header)
+        if common_header and common_header not in data_df.columns:
+            data_df[common_header] = pd.NA
+            logger.debug(f"Added placeholder for common header '{common_header}'.")
+
+        # Structure the output
+        structured_output[experiment_name] = {
+            'metadata': metadata.copy(),  # Use a copy to prevent overwriting
+            'data': data_df
+        }
+
+        logger.info(f"Extracted single experiment structure for '{experiment_name}'.")
+        logger.debug("Structured Output:")
+        pprint(structured_output[experiment_name])
 
     # Add ASSAY to metadata
     metadata['ASSAY'] = assay
@@ -142,42 +208,12 @@ def extract_single(lines, file_path, assay):
     metadata['FILE'] = file_property
     logger.debug(f"Set 'FILE' metadata: {file_property}")
 
-    # Determine the common header
-    common_header = extract_common_header(column_headers) if column_headers else None
+    if structured_output:
+        logger.info(f"Successfully extracted {experiment_count} experiment(s) from '{file_path}'.")
+    else:
+        logger.warning("No valid data or headers found in the single-format file.")
 
-    # Build the data DataFrame
-    if column_headers and data_lines:
-        data_df = pd.DataFrame(data_lines, columns=column_headers)
-        logger.debug(f"Created DataFrame with {len(data_df)} rows.")
-
-        # Sanitize column names
-        original_columns = data_df.columns.tolist()
-        data_df.columns = [sanitize_column_name(col) for col in data_df.columns]
-        logger.debug(f"Sanitized column names: {data_df.columns.tolist()}")
-
-        # Add a placeholder for the common header if needed
-        if common_header and common_header not in data_df.columns:
-            data_df[common_header] = pd.NA
-            logger.debug(f"Added placeholder for common header '{common_header}'.")
-
-        # Structure the output like multi-format
-        experiment_name = f"{metadata.get('ASSAY', 'Unknown_Assay')} {metadata.get('FILE', 'Unknown_File')}"
-        structured_output = {
-            experiment_name: {
-                'metadata': metadata,
-                'data': data_df
-            }
-        }
-
-        logger.info(f"Extracted single experiment structure for '{experiment_name}'.")
-        logger.debug("Structured Output:")
-        pprint(structured_output)
-
-        return metadata, structured_output
-
-    # Handle case where data extraction failed
-    logger.warning("No valid data or headers found in the single-format file.")
-    return metadata, {}
+    return metadata, structured_output
 
 
 def extract_multi(lines, file_path, assay):
@@ -322,11 +358,11 @@ def extract_multi(lines, file_path, assay):
 
 def main():
     """
-    Main function to handle standalone execution of the read_file script.
+    Main function to handle standalone execution of the file_reader script.
     """
     import argparse
 
-    parser = argparse.ArgumentParser(description="Read File Script for Piep-DMA Project")
+    parser = argparse.ArgumentParser(description="File Reader Script for Piep-DMA Project")
     parser.add_argument("file_path", help="Path to the input .txt file.")
     parser.add_argument("assay", help="Assay type.")
     parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode with detailed logs.")
@@ -335,21 +371,21 @@ def main():
 
     # Set up logging based on debug flag
     log_level = logging.DEBUG if args.debug else logging.INFO
-    setup_logging(log_level=log_level, log_file='read_file.log')  # Customize log_file as needed
+    setup_logging(log_level=log_level, log_file='file_reader.log')  # Customize log_file as needed
 
-    # Acquire a logger for read_file.py
+    # Acquire a logger for file_reader.py
     logger = logging.getLogger(__name__)
 
     file_path = args.file_path
     assay = args.assay
 
-    logger.info(f"Read File: Processing file '{file_path}' with assay '{assay}'.")
+    logger.info(f"File Reader: Processing file '{file_path}' with assay '{assay}'.")
     metadata, structured_output = read_file(file_path, assay)
 
     if metadata and structured_output:
-        logger.info("Read File: Successfully extracted metadata and structured output.")
+        logger.info("File Reader: Successfully extracted metadata and structured output.")
     else:
-        logger.error("Read File: Failed to extract data.")
+        logger.error("File Reader: Failed to extract data.")
 
     # Optionally, save the structured output to a file or perform further processing
     # For demonstration, we'll print the metadata and structured output
