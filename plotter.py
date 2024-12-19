@@ -6,11 +6,54 @@ import os
 import sys
 import re
 import logging
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(message)s')
 logger = logging.getLogger(__name__)
 
+def generate_bar_graph(metric, samples_data, output_dir):
+    """
+    Generate and save a bar graph for a specific metric across all samples.
+
+    Parameters:
+        metric (str): The name of the metric (e.g., 'Onset of Eprime').
+        samples_data (dict): A dictionary with SAMPLE names as keys and dictionaries containing 'average' and 'std' as values.
+        output_dir (Path): Directory to save the graph.
+
+    Returns:
+        None
+    """
+    if not samples_data:
+        logger.warning(f"No data provided for metric '{metric}'. Skipping graph generation.")
+        return
+
+    samples = list(samples_data.keys())
+    averages = [samples_data[sample]['average'] for sample in samples]
+    std_devs = [samples_data[sample]['std'] for sample in samples]
+
+    plt.figure(figsize=(12, 8))
+    bars = plt.bar(samples, averages, yerr=std_devs, capsize=5, color='skyblue', edgecolor='black')
+    plt.xlabel('Sample', fontsize=14, fontweight='bold')
+    plt.ylabel(metric, fontsize=14, fontweight='bold')
+    plt.title(f'{metric} by Sample', fontsize=16, fontweight='bold')
+    plt.xticks(rotation=45, ha='right', fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+
+    # Annotate bars with their average values
+    for bar, avg in zip(bars, averages):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2.0, height, f'{avg:.2f}', ha='center', va='bottom', fontsize=12)
+
+    # Save the plot
+    graph_filename = f"{metric.replace(' ', '_')}_Bar_Graph.png"
+    graph_path = output_dir / graph_filename
+    plt.savefig(graph_path)
+    plt.close()
+
+    logger.info(f"Saved bar graph for '{metric}' to '{graph_path}'.")
 
 def sanitize_column_name(column_name):
     """

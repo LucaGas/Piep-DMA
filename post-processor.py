@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 import logging
 import re
+from plotter import generate_bar_graph  # Import the updated plotting function
 
 # Configure logging
 logging.basicConfig(
@@ -73,7 +74,6 @@ def get_metadata_value(df, property_name):
     except Exception as e:
         logger.error(f"Error extracting metadata '{property_name}': {e}")
         return None
-import re  # Ensure this import is present at the top of your script
 
 def process_temperature_sweep_data(csv_file, df, post_process_dir):
     """
@@ -157,13 +157,18 @@ def perform_post_processing(all_data, output_dir):
     """
     logger.info("Starting post-processing of analyzed CSV files...")
 
+    # Define the central post-process directory within the output directory
+    central_post_process_dir = output_dir / "post-process"
+    central_post_process_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured existence of central post-process directory '{central_post_process_dir}'.")
+
     # Categorize files by ASSAY and SAMPLE
     categorized_data = {}
 
     for csv_file, df in all_data:
         # Extract ASSAY and SAMPLE metadata
         assay = get_metadata_value(df, 'ASSAY')
-        sample = get_metadata_value(df, 'SAMPLE:')  # Note the change to 'SAMPLE:'
+        sample = get_metadata_value(df, 'SAMPLE:')  # Ensure 'SAMPLE:' matches your metadata property name
 
         if not assay:
             logger.warning(f"Skipping '{csv_file.name}' due to missing ASSAY metadata.")
@@ -182,70 +187,159 @@ def perform_post_processing(all_data, output_dir):
         categorized_data[assay][sample].append((csv_file, df))
         logger.debug(f"Categorized '{csv_file.name}' under ASSAY '{assay}' and SAMPLE '{sample}'.")
 
-    # Initialize a dictionary to accumulate extracted data per ASSAY/SAMPLE
-    data_accumulator = {}
-    # Structure: {assay: {sample: {'Onset of Eprime': [...], 'Peak of Edoubleprime X': [...], ...}}}
+    # Initialize accumulators for summaries
+    summary_data = {}
+    file_metadata = {}
 
     # Process each category
     for assay, samples in categorized_data.items():
         for sample, files in samples.items():
             logger.info(f"Processing ASSAY '{assay}', SAMPLE '{sample}' with {len(files)} file(s).")
 
-            # Initialize accumulator for the current ASSAY/SAMPLE
-            if assay not in data_accumulator:
-                data_accumulator[assay] = {}
-            if sample not in data_accumulator[assay]:
-                data_accumulator[assay][sample] = {
-                    'Onset of Eprime': [],
-                    'Peak of Edoubleprime X': [],
-                    'Peak of Edoubleprime Y': [],
-                    'Peak of tand X': [],
-                    'Peak of tand Y': []
-                }
-
             for csv_file, df in files:
-                # Define the post-process directory within the same directory as the CSV file
-                post_process_dir = csv_file.parent / "post-process"
-                post_process_dir.mkdir(parents=True, exist_ok=True)
-                logger.info(f"Ensured existence of post-process directory '{post_process_dir}'.")
-
                 # Run the specific processing function based on ASSAY
                 if assay.lower() == "temperature sweep":
-                    extracted_values = process_temperature_sweep_data(csv_file, df, post_process_dir)
+                    extracted_values = process_temperature_sweep_data(csv_file, df, central_post_process_dir)
 
-                    # Accumulate extracted values
-                    for key, value in extracted_values.items():
-                        if value is not None:
-                            data_accumulator[assay][sample][key].append(value)
+                    # Initialize summary structures if not already present
+                    if assay not in summary_data:
+                        summary_data[assay] = {}
+                    if sample not in summary_data[assay]:
+                        summary_data[assay][sample] = {
+                            'Onset of Eprime': [],
+                            'Peak of Edoubleprime': [],
+                            'Peak of tand': []
+                        }
+
+                    # Collect 'Onset of Eprime' values
+                    onset = extracted_values.get('Onset of Eprime')
+                    if onset is not None:
+                        summary_data[assay][sample]['Onset of Eprime'].append(onset)
+
+                    # Collect 'Peak of Edoubleprime' values
+                    peak_edoubleprime = extracted_values.get('Peak of Edoubleprime X'), extracted_values.get('Peak of Edoubleprime Y')
+                    if all(peak_edoubleprime):
+                        # Average X and Y for a single value
+                        average_peak_edoubleprime = (peak_edoubleprime[0] + peak_edoubleprime[1]) / 2
+                        summary_data[assay][sample]['Peak of Edoubleprime'].append(average_peak_edoubleprime)
+
+                    # Collect 'Peak of tand' values
+                    peak_tand = extracted_values.get('Peak of tand X'), extracted_values.get('Peak of tand Y')
+                    if all(peak_tand):
+                        average_peak_tand = (peak_tand[0] + peak_tand[1]) / 2
+                        summary_data[assay][sample]['Peak of tand'].append(average_peak_tand)
+
+                    # Collect 'FILE:' metadata
+                    file_meta = get_metadata_value(df, 'FILE:')
+                    if file_meta:
+                        if assay not in file_metadata:
+                            file_metadata[assay] = {}
+                        if sample not in file_metadata[assay]:
+                            file_metadata[assay][sample] = []
+                        file_metadata[assay][sample].append(file_meta)
                 else:
                     logger.warning(f"No processing function defined for ASSAY '{assay}' in '{csv_file.name}'. Skipping.")
 
-    # Compute averages and save summaries
-    for assay, samples in data_accumulator.items():
-        for sample, metrics in samples.items():
-            logger.info(f"Computing averages for ASSAY '{assay}', SAMPLE '{sample}'.")
+    # Create an Excel writer
+    excel_path = output_dir / "Summary_Averages.xlsx"
+    with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+        # 1. Create the Summary Sheet
+        summary_sheet_data = []
+        for assay, samples in file_metadata.items():
+            for sample, files in samples.items():
+                summary_sheet_data.append({
+                    'ASSAY': assay,
+                    'SAMPLE': sample,
+                    'FILES': "; ".join(files)
+                })
+        summary_df = pd.DataFrame(summary_sheet_data)
 
-            averages = {}
-            for key, values in metrics.items():
-                if values:
-                    averages[key] = sum(values) / len(values)
-                else:
-                    averages[key] = None
+        # Reformat Summary Sheet: First row sample names, below rows FILE: metadata
+        # Pivot the DataFrame to have samples as columns and FILEs as rows
+        pivot_data = {}
+        for entry in summary_sheet_data:
+            sample = entry['SAMPLE']
+            files = entry['FILES'].split("; ")
+            if sample not in pivot_data:
+                pivot_data[sample] = []
+            pivot_data[sample].extend(files)
 
-            # Create a DataFrame for the averages
-            summary_df = pd.DataFrame([averages])
+        # Determine the maximum number of FILEs among samples
+        max_files = max(len(files) for files in pivot_data.values()) if pivot_data else 0
 
-            # Define the summary file path
-            summary_file = post_process_dir / "Summary_Averages.csv"
+        # Create a DataFrame with samples as columns and FILEs as rows
+        summary_pivot_df = pd.DataFrame({
+            sample: files + [None]*(max_files - len(files))
+            for sample, files in pivot_data.items()
+        })
 
-            # Save the summary to CSV
-            try:
-                summary_df.to_csv(summary_file, index=False)
-                logger.info(f"Saved summary averages to '{summary_file}'.")
-            except Exception as e:
-                logger.error(f"Error saving summary averages to '{summary_file}': {e}")
+        # Write the Summary sheet
+        summary_pivot_df.to_excel(writer, sheet_name='Summary', index=False)
 
-    logger.info("Post-processing of analyzed CSV files completed.")
+        # 2. Aggregate Metrics Across All Samples
+        # Initialize a dictionary to hold metric data across all samples
+        metrics_summary = {}
+
+        for assay, samples in summary_data.items():
+            for sample, metrics in samples.items():
+                for metric, values in metrics.items():
+                    if values:
+                        average = sum(values) / len(values)
+                        std_dev = pd.Series(values).std()
+                        if metric not in metrics_summary:
+                            metrics_summary[metric] = {}
+                        metrics_summary[metric][sample] = {
+                            'average': average,
+                            'std': std_dev if pd.notna(std_dev) else 0  # Replace NaN std with 0
+                        }
+
+        # 3. Generate and Save Bar Graphs for Each Metric
+        for metric, samples_data in metrics_summary.items():
+            # Ensure all samples are included, replacing NaN std with 0
+            cleaned_samples_data = {}
+            for sample, data in samples_data.items():
+                average = data['average']
+                std = data['std']
+                if pd.isna(std):
+                    std = 0
+                cleaned_samples_data[sample] = {
+                    'average': average,
+                    'std': std
+                }
+
+            if cleaned_samples_data:
+                generate_bar_graph(metric, cleaned_samples_data, central_post_process_dir)
+            else:
+                logger.warning(f"No valid data to plot for metric '{metric}'. Skipping graph generation.")
+
+        # 4. **Uncommented Section: Create Individual SAMPLE Sheets**
+        for assay, samples in summary_data.items():
+            for sample, metrics in samples.items():
+                sheet_name = f"{sample}"
+                sheet_data = {
+                    'Metric': [],
+                    'Average': [],
+                    'STD': []
+                }
+
+                # Process each metadata field
+                for key, values in metrics.items():
+                    if values:
+                        average = sum(values) / len(values)
+                        std_dev = pd.Series(values).std()
+                    else:
+                        average = None
+                        std_dev = None
+                    sheet_data['Metric'].append(key)
+                    sheet_data['Average'].append(average)
+                    sheet_data['STD'].append(std_dev)
+
+                sheet_df = pd.DataFrame(sheet_data)
+                sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                logger.info(f"Created Excel sheet for sample '{sample}'.")
+
+        logger.info(f"Saved summary and averages to Excel file '{excel_path}'.")
+        logger.info("Post-processing of analyzed CSV files completed.")
 
 def main():
     """
